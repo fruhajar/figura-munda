@@ -112,15 +112,20 @@ and `requestBody` is read-only even in Firefox. The MAIN-world JS-patching worka
 breaks on every site redesign, which is a maintenance tax this project exists to
 avoid.
 
+## Licence
+
+**MPL-2.0**, with the commercial layer kept in a separate private repository that
+links this engine rather than absorbing it. File-level copyleft means nobody can
+close a fork of the cleaning engine, and contributions need no CLA. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+The closed layer will never be security-relevant. Scheduling, dashboards and
+reporting may be closed; inspection, cleaning and redaction checks never will be.
+
 ## Open decisions
 
-1. **Licence.** Open core with a private paid layer, or PolyForm Noncommercial over
-   everything. Must be settled before the first public commit, along with
-   contribution terms (a CLA, or a paid layer in a separate repo sharing no code).
-   The closed half must never be security-relevant: scheduling and reporting may be
-   closed, the cleaning engine never.
-2. **Leakage survey.** Which destinations actually leak? Major social platforms
+1. **Leakage survey.** Which destinations actually leak? Major social platforms
    re-encode and strip EXIF anyway, so the real exposure is webmail attachments,
    forums, file hosts and application portals. This determines whether mobile or
    desktop ships first.
-3. **Mobile or desktop first**, pending that survey.
+2. **Mobile or desktop first**, pending that survey.
