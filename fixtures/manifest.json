@@ -1,0 +1,247 @@
+{
+  "fixtures": {
+    "_filesystem": {
+      "classes": {
+        "filesystem": [
+          "mtime and atime set to 2024-06-14 19:42:07 UTC on every fixture",
+          "user.figmun.test xattr on photo-phone.jpg",
+          "photo-phone.jpg.Identifier sidecar standing in for the Windows Zone.Identifier ADS, which cannot exist on this filesystem"
+        ]
+      },
+      "observed": {
+        "xattr_set": true
+      }
+    },
+    "clip.mp4": {
+      "classes": {
+        "device": [
+          "moov/udta \\xa9mak=Apple",
+          "moov/udta \\xa9mod=iPhone 14 Pro",
+          "ilst \\xa9too=Lavf... encoder string"
+        ],
+        "identity": [
+          "ilst \\xa9ART=Marie Dvorakova",
+          "ilst \\xa9cmt=do not publish"
+        ],
+        "location": [
+          "moov/udta \\xa9xyz = +50.0755+014.4378/ (hand-injected; the form a phone writes)",
+          "3GPP loci box, written by ffmpeg from -metadata location"
+        ],
+        "time": [
+          "mvhd creation_time=3801238927 (seconds since 1904-01-01, binary)",
+          "moov/udta \\xa9dat=2024-06-14T19:42:07Z"
+        ]
+      },
+      "observed": {
+        "mvhd_created_1904_epoch": 3801238927,
+        "total_bytes": 6715
+      }
+    },
+    "diagram.svg": {
+      "classes": {
+        "correlation": [
+          "sodipodi:docname=org-chart-INTERNAL-v4.svg"
+        ],
+        "device": [
+          "inkscape:version=1.3.2"
+        ],
+        "hidden_payload": [
+          "<text y=\"400\"> parked outside the 0 0 200 100 viewBox"
+        ],
+        "identity": [
+          "dc:creator/cc:Agent=Marie Dvorakova"
+        ],
+        "time": [
+          "dc:date=2024-06-14"
+        ]
+      },
+      "observed": {
+        "offcanvas_text": "superseded headcount plan: -18 FTE Q3",
+        "total_bytes": 906
+      }
+    },
+    "letter.docx": {
+      "classes": {
+        "correlation": [
+          "w15:docId={3F2A9C41-55B1-4E7C-9B30-6D1E2A77C004}",
+          "6x w:rsid save IDs"
+        ],
+        "hidden_payload": [
+          "docProps/thumbnail.jpeg (embedded preview)"
+        ],
+        "history": [
+          "w:ins and w:del tracked changes naming both authors and the superseded figure",
+          "comments.xml with author and initials",
+          "cp:revision=14"
+        ],
+        "identity": [
+          "dc:creator=Marie Dvorakova",
+          "cp:lastModifiedBy=Petr Novak",
+          "Company=Severin Holding a.s.",
+          "Manager=Jan Prochazka",
+          "Template=sev-internal-memo.dotx"
+        ],
+        "structural_fingerprint": [
+          "every ZIP member stamped 2019-03-14 09:26:52 (DOS time has 2-second\n                                    granularity, so odd seconds are unrepresentable)",
+          "non-alphabetical Word-like member order"
+        ],
+        "time": [
+          "dcterms:created=2024-05-02",
+          "dcterms:modified=2024-06-15",
+          "cp:lastPrinted=2024-06-13",
+          "TotalTime=2471 editing minutes"
+        ]
+      },
+      "observed": {
+        "member_order": [
+          "[Content_Types].xml",
+          "_rels/.rels",
+          "word/document.xml",
+          "word/_rels/document.xml.rels",
+          "word/settings.xml",
+          "word/comments.xml",
+          "docProps/core.xml",
+          "docProps/app.xml",
+          "docProps/thumbnail.jpeg"
+        ],
+        "total_bytes": 9284
+      }
+    },
+    "photo-phone.jpg": {
+      "classes": {
+        "correlation": [
+          "XMP xmpMM:DocumentID",
+          "XMP xmpMM:InstanceID",
+          "XMP xmpMM:OriginalDocumentID",
+          "EXIF ImageUniqueID (0xA420)"
+        ],
+        "device": [
+          "Make=Apple",
+          "Model=iPhone 14 Pro",
+          "Software=17.4.1",
+          "BodySerialNumber=BX-4471902-TT",
+          "LensSerialNumber=LN-88213-04",
+          "LensModel",
+          "MakerNote (opaque, carries the body serial again)"
+        ],
+        "hidden_payload": [
+          "IFD1 thumbnail is 160x120 testsrc, visibly NOT a scaled copy of the 320x240 main image: the uncropped original"
+        ],
+        "identity": [
+          "EXIF Artist=Marie Dvorakova",
+          "EXIF Copyright",
+          "EXIF ImageDescription",
+          "IPTC 2:80 By-line=Marie Dvorakova",
+          "XMP dc:creator"
+        ],
+        "location": [
+          "GPSLatitude=(50, 4, 31.8) N",
+          "GPSLongitude=(14, 26, 16.1) E",
+          "GPSAltitude=217.40",
+          "GPSTimeStamp",
+          "GPSDateStamp=2024:06:14",
+          "IPTC 2:90 City=Praha",
+          "IPTC 2:101 Country"
+        ],
+        "never_remove": [
+          "APP2 ICC_PROFILE (0-tag stub)"
+        ],
+        "time": [
+          "DateTimeOriginal=2024:06:14 19:42:07",
+          "DateTimeDigitized",
+          "DateTime",
+          "XMP xmp:MetadataDate"
+        ]
+      },
+      "observed": {
+        "thumb_bytes": 5905,
+        "total_bytes": 8467
+      }
+    },
+    "report-incremental.pdf": {
+      "classes": {
+        "history": [
+          "incremental update: v2 overwrites obj 4 and 6, v1 remains in the earlier revision and is fully recoverable (CZK 1,950,000)"
+        ],
+        "identity": [
+          "/Author in the v1 Info dict survives into the v2 file"
+        ]
+      },
+      "observed": {
+        "recoverable_v1": "CZK 1,950,000",
+        "total_bytes": 1008
+      }
+    },
+    "report-redacted.pdf": {
+      "classes": {
+        "correlation": [
+          "trailer /ID pair=9f2c41a055b14e7c9b306d1e2a77c004",
+          "XMP xmpMM:DocumentID",
+          "XMP xmpMM:InstanceID"
+        ],
+        "device": [
+          "/Creator=Microsoft Word 2021",
+          "/Producer=Acrobat Distiller 23.0"
+        ],
+        "hidden_payload": [
+          "/OpenAction JavaScript",
+          "/EmbeddedFiles notes.txt"
+        ],
+        "identity": [
+          "/Author=Marie Dvorakova",
+          "XMP dc:creator"
+        ],
+        "redaction_integrity": [
+          "text drawn, then covered by a filled rect; still extractable: Claimant bank account CZ65 0800 0000 1920 0014 5399"
+        ],
+        "time": [
+          "/CreationDate",
+          "/ModDate"
+        ]
+      },
+      "observed": {
+        "hidden_text": "Claimant bank account CZ65 0800 0000 1920 0014 5399",
+        "total_bytes": 2367
+      }
+    },
+    "screenshot.png": {
+      "classes": {
+        "correlation": [
+          "iTXt XML:com.adobe.xmp carries DocumentID/InstanceID"
+        ],
+        "device": [
+          "tEXt Software=GNOME Screenshot 45.1",
+          "tEXt Comment names the host",
+          "eXIf Software"
+        ],
+        "identity": [
+          "tEXt Author=Marie Dvorakova",
+          "XMP dc:creator"
+        ],
+        "time": [
+          "tIME=2024-06-14T17:42:07Z",
+          "eXIf DateTimeOriginal"
+        ]
+      },
+      "observed": {
+        "total_bytes": 1659
+      }
+    },
+    "signed.pdf": {
+      "classes": {
+        "identity": [
+          "/Author",
+          "/Sig /Name"
+        ],
+        "never_remove": [
+          "AcroForm /SigFlags 3 with a /Sig field. Any metadata edit invalidates a real signature: detect and refuse. The /Contents here is a stub, not real CAdES."
+        ]
+      },
+      "observed": {
+        "total_bytes": 991
+      }
+    }
+  },
+  "generator": "fixtures/generate.py",
+  "note": "Declared ground truth for the inspect phase. Regenerate rather than edit."
+}
