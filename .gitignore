@@ -10,3 +10,5 @@ Cargo.lock.orig
 
 # Generated fixtures: rebuild with fixtures/generate.py
 /fixtures/out
+__pycache__/
+*.pyc
