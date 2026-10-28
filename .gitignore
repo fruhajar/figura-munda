@@ -1,0 +1,9 @@
+/target
+**/target
+Cargo.lock.orig
+*.swp
+.DS_Store
+
+# Test corpus: real documents carry real metadata. Never commit samples that
+# came from a person. Generated fixtures only, under fixtures/.
+/corpus
