@@ -242,7 +242,7 @@ fixtures/          generated test files and an independent verifier
 ```
 
 ```
-cargo test                     # everything, 215 tests
+cargo test                     # everything, 216 tests
 cargo run -p fm-cli -- inspect ~/Pictures
 cargo run -p fm-gui
 python3 fixtures/generate.py   # the test files the engine is checked against
@@ -317,20 +317,23 @@ cleaning engine, the redaction checks and the runner never will be.
 
 ## Where it stands
 
-**Tested, and the tests say what they test.** 215 of them. The engine is checked
+**Tested, and the tests say what they test.** 216 of them. The engine is checked
 against `fixtures/manifest.json`, which declares field by field what each
 generated fixture contains, so the manifest is the contract between the Python
 generator and the Rust engine and neither can quietly agree with itself. The
-cleaned MP4 is checked with `ffprobe`, which is a demuxer this project did not
-write.
+cleaned MP4 is checked with `ffprobe`, and the cleaned PDFs with
+`fixtures/checkpdf.py`: a demuxer and a parser that know nothing about this
+engine, which is the only kind of check that means anything about output.
 
 **Not verified, and it matters:**
 
-- **No PDF has been opened in a real reader.** The output reloads and re-inspects,
-  but there is no second implementation here to check it against, so "still a
-  valid PDF" rests on one library's opinion. An independent structural check in
-  `fixtures/verify.py` would close most of this; a real reader would close the
-  rest.
+- **No PDF has been opened in a real reader.** `fixtures/checkpdf.py` closes most
+  of this: it parses the cross-reference table by hand, shares no code with the
+  engine, and asserts every offset lands on the object it claims to, which is
+  the failure a library reading its own output would hide. It also confirms the
+  incremental fixture comes out with one revision instead of two. What it does
+  not do is render a page, so "opens in Acrobat and looks right" is still
+  unverified.
 - **The window has never been on screen.** It was built where there is no display
   and no Xvfb. It links and runs as far as creating a window. Nobody should call
   the layout finished until it has been seen.

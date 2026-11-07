@@ -547,3 +547,59 @@ fn a_cleaned_clip_still_demuxes() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Reading a cleaned PDF back through the library that wrote it proves the
+/// library is self-consistent and nothing else. `fixtures/checkpdf.py` parses
+/// the cross-reference table by hand and asserts every offset lands on the
+/// object it claims to, which is exactly the failure a self-consistent library
+/// would hide and which produces a file every other reader rejects.
+#[test]
+fn cleaned_pdfs_pass_an_independent_structural_check() {
+    let checker = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/checkpdf.py");
+    if !checker.exists() {
+        eprintln!("skipping: fixtures/checkpdf.py is missing");
+        return;
+    }
+    if std::process::Command::new("python3").arg("--version").output().is_err() {
+        eprintln!("skipping: python3 is not installed");
+        return;
+    }
+
+    let dir = std::env::temp_dir().join("fm-core-pdf-check");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut written: Vec<PathBuf> = Vec::new();
+
+    for name in ["report-redacted.pdf", "report-incremental.pdf"] {
+        let Some((path, data)) = fixture(name) else { continue };
+        for profile in Profile::builtins() {
+            if profile.inert() {
+                continue;
+            }
+            let cleaned = clean_bytes(&data, ext(&path).as_deref(), &profile).unwrap();
+            let out = dir.join(format!("{}-{name}", profile.name));
+            std::fs::write(&out, &cleaned.data).unwrap();
+            written.push(out);
+        }
+    }
+    if written.is_empty() {
+        eprintln!("skipping: fixtures/out absent, run fixtures/generate.py");
+        return;
+    }
+
+    let output = std::process::Command::new("python3")
+        .arg(&checker)
+        .args(&written)
+        .output()
+        .expect("python3 would not start");
+    let report = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(output.status.success(), "{report}");
+
+    // Flattening is the claim that matters here, and it is checked by a parser
+    // that has never heard of this engine: the incremental fixture goes in with
+    // two revisions and has to come out with one.
+    for line in report.lines().filter(|l| l.contains("incremental")) {
+        assert!(line.contains("1 revision(s)"), "{line}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

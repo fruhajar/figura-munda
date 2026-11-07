@@ -10,7 +10,15 @@ defaults. Real-world samples belong in `/corpus`, which is gitignored and stays 
 ```
 python3 generate.py      # writes out/ and manifest.json
 python3 verify.py        # re-reads out/ and checks every declared claim
+python3 checkpdf.py F... # structural check of any PDF, including cleaned output
 ```
+
+`verify.py` checks the inputs. `checkpdf.py` checks outputs, and exists because
+reading a cleaned PDF back through the library that wrote it proves that library
+is self-consistent and nothing else. It parses the cross-reference table by hand
+and asserts every offset lands on the object it claims to, which is the failure
+a self-consistent library hides and which produces a file every other reader
+rejects. The Rust test suite runs it over every cleaned fixture.
 
 `out/` is gitignored. Regenerate rather than edit, and never hand-edit
 `manifest.json`.
