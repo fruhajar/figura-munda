@@ -17,7 +17,7 @@
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
-        android:label="Figura Munda"
+        android:label="@string/app_name"
         android:theme="@style/Theme.Material3.DayNight">
 
         <activity
@@ -28,6 +28,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Cleaned copies are handed to the share sheet from the cache, so
+             the file in the user's gallery is never what gets forwarded. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.shared"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <!-- The share sheet: cleaning a file on its way out is the other half
              of the product, and on iOS it is the whole of it. -->

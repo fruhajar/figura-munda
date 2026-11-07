@@ -7,7 +7,15 @@ cross-reference table by hand and asserts every offset in it points at the
 object it claims to, which is the failure a self-consistent library would hide
 and which makes a file every other reader rejects.
 
-    python3 checkpdf.py FILE...
+    python3 checkpdf.py FILE...             any PDF: is it structurally sound
+    python3 checkpdf.py --cleaned FILE...   output: and does it hold the
+                                            promises cleaning makes
+
+The second mode is stricter because cleaned output has promises an arbitrary
+input does not: one revision, no chain to a previous one, and a trailer that
+does not still carry the keys of the cross-reference stream it may have been
+loaded from. Running it over an input fixture would fail on the incremental
+one, which has a previous revision on purpose.
 """
 import re
 import sys
@@ -18,7 +26,7 @@ def fail(path, message):
     return 1
 
 
-def check(path):
+def check(path, cleaned=False):
     data = open(path, "rb").read()
     problems = 0
 
@@ -40,10 +48,16 @@ def check(path):
         return fail(path, f"startxref points past the end of the file ({xref_at})")
 
     if not data[xref_at:].startswith(b"xref"):
-        # Cross-reference streams are legal and are not what this checks; say so
-        # rather than claiming a failure.
-        print(f"  \033[33mSKIP\033[0m {path}: cross-reference stream, not a table")
-        return 0
+        # A cross-reference stream is legal PDF and this checker cannot read
+        # one. Saying SKIP quietly would mean the files whose structure is
+        # least verified are the ones that go unchecked, which is how a
+        # malformed trailer survived here once already, so it is reported
+        # loudly and counts against the run. Cleaned output is always a table.
+        print(
+            f"  \033[33mUNCHECKED\033[0m {path}: cross-reference stream, "
+            "which this checker cannot read"
+        )
+        return 1
 
     # xref\n <first> <count>\n then <count> twenty-byte entries.
     body = data[xref_at + 4:]
@@ -86,8 +100,22 @@ def check(path):
     if trailer == -1:
         problems += fail(path, "no trailer")
     else:
-        if b"/Root" not in data[trailer:trailer + 400]:
+        body = data[trailer:trailer + 600]
+        if b"/Root" not in body:
             problems += fail(path, "trailer names no /Root")
+        # A table's trailer must not carry a cross-reference stream's keys. A
+        # document loaded from a stream keeps that stream's dictionary, and
+        # writing a table without clearing it produces exactly this.
+        for key in (b"/Type/XRef", b"/Type /XRef", b"/W[", b"/W [") if cleaned else ():
+            if key in body:
+                problems += fail(
+                    path, f"table trailer carries the stream key {key.decode()}"
+                )
+        if cleaned and b"/Prev" in body:
+            problems += fail(path, "trailer points at a previous revision")
+
+    if cleaned and revisions > 1:
+        problems += fail(path, f"{revisions} revisions; cleaning should leave one")
 
     if not problems:
         print(
@@ -97,11 +125,13 @@ def check(path):
     return problems
 
 
-def main(paths):
+def main(argv):
+    cleaned = "--cleaned" in argv
+    paths = [a for a in argv if not a.startswith("--")]
     if not paths:
         print(__doc__)
         return 2
-    problems = sum(check(p) for p in paths)
+    problems = sum(check(p, cleaned) for p in paths)
     print()
     if problems:
         print(f"{problems} problem(s)")

@@ -11,6 +11,26 @@ Storage Access Framework, `WorkManager` wakes a worker on a schedule, and the
 worker walks the folder's documents through the Rust runner one at a time. The
 runner holds every decision; the host holds every byte.
 
+## What is here, and what is still missing
+
+Present and internally consistent: the manifest, the Gradle files, the
+WorkManager schedule, the folder-grant and profile handling, the sweep loop, the
+notification, the share path, the ProGuard rules the JNI entry points need, and
+the JNI declarations on both sides. Every class the manifest names exists, and
+every symbol the Kotlin references is defined.
+
+Still missing, and each is a real gap rather than a detail:
+
+| Missing | Why it matters |
+|---|---|
+| The Gradle wrapper | Deliberately not committed: a wrapper jar is a binary blob in a repository whose argument is that you should be able to check what you run. Generate it with `gradle wrapper --gradle-version 8.11`. |
+| Any settings UI | `MainActivity` pins the flow and not the layout. The layout is a product question to answer on a device. |
+| The report in the share path | `ShareActivity` must show what it found before it writes, for the same reason the desktop window has two phases. The cleaning call is there; the screen is not. |
+| A launcher icon and theme | Cosmetic, and the build will complain until they exist. |
+| A foreground service | A camera roll of thousands will not finish inside a background worker's window. The runner resumes, but resuming forever is not shipping. |
+| Any instrumented test | Nothing here has run. The Rust side has 32 tests; the Kotlin has none, because there is no device and no emulator. |
+| A reproducible APK | The binaries are reproducible and checked by `tools/check-reproducible.sh`. The APK is a ZIP, so it has the same member-order and timestamp problem the engine fixes in OOXML, and nothing addresses it yet. |
+
 ## Building it, once there is a toolchain
 
 ```

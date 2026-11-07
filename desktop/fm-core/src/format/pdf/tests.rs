@@ -118,6 +118,39 @@ fn strict_removes_the_covered_text_and_keeps_the_rest_of_the_page() {
     assert!(encoded.contains("re"), "the rectangle itself should stay: {encoded}");
 }
 
+/// The rewrite pins the cross-reference style, which is what makes the
+/// structural-fingerprint finding a claim the engine can keep and what lets an
+/// independent checker verify the output by hand.
+#[test]
+fn every_cleaned_pdf_comes_out_with_a_classic_cross_reference_table() {
+    for profile in Profile::builtins() {
+        if profile.inert() {
+            continue;
+        }
+        let cleaned = Pdf.clean(&plain(), &profile).unwrap();
+        let has_table = cleaned.data.windows(5).any(|w| w == b"\nxref");
+        let has_stream = cleaned.data.windows(5).any(|w| w == b"/XRef");
+        assert!(has_table, "{}: no cross-reference table", profile.name);
+        assert!(!has_stream, "{}: the trailer still names a cross-reference stream", profile.name);
+        assert!(
+            !cleaned.data.windows(5).any(|w| w == b"/Prev"),
+            "{}: the revision chain survived",
+            profile.name
+        );
+
+        let after = Pdf.inspect(&cleaned.data).unwrap();
+        assert!(
+            after.in_class(Class::StructuralFingerprint).all(|f| f.protected),
+            "{}: {:?}",
+            profile.name,
+            after.in_class(Class::StructuralFingerprint).map(|f| &f.locator).collect::<Vec<_>>()
+        );
+    }
+
+    // And the input really was a stream, so the test is not vacuous.
+    assert!(plain().windows(5).any(|w| w == b"/XRef"), "the fixture is not a stream any more");
+}
+
 #[test]
 fn standard_strips_the_information_dictionary() {
     let cleaned = Pdf.clean(&plain(), &Profile::standard()).unwrap();

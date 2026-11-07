@@ -11,13 +11,17 @@
 //! Cleaning rewrites the file from the resolved object set rather than appending
 //! to it, which is what makes the superseded revisions actually go away. That
 //! also means the output has this tool's structural shape instead of the
-//! original writer's, which is reported rather than hidden.
+//! original writer's. The shapes that identify a writer are named in
+//! [`writer_shape`] and reported as a structural fingerprint, and because the
+//! rewrite is what removes them, they are only reported when the file still has
+//! them.
 
 use super::{xmp, Change, Handler, Outcome};
 use crate::error::{Error, Result};
 use crate::model::{Action, Blocker, Class, Finding, FormatId, Impact, Inspection};
 use crate::profile::{Blending, Profile, TimeOutcome};
 use lopdf::content::{Content, Operation};
+use lopdf::xref::XrefType;
 use lopdf::{Dictionary, Document, Object, ObjectId};
 
 pub struct Pdf;
@@ -276,6 +280,9 @@ impl Handler for Pdf {
                     );
                 }
             }
+            if catalog.get(b"Linearized").is_ok() {
+                ins.mark("pdf:linearized");
+            }
             if catalog.get(b"StructTreeRoot").is_ok() {
                 ins.findings.push(
                     Finding::new(
@@ -287,6 +294,23 @@ impl Handler for Pdf {
                     .note("kept on purpose: removing it makes the document unreadable to a screen reader"),
                 );
             }
+        }
+
+        // How the file is put together, which identifies the writer even with
+        // every field gone. Reported only where the file still deviates from
+        // the shape this tool writes, so a cleaned PDF reports nothing about
+        // its own structure and verification stays meaningful.
+        for (marker, label) in writer_shape(data) {
+            ins.mark(marker);
+            ins.findings.push(
+                Finding::new(Class::StructuralFingerprint, format!("pdf:shape:{marker}"), label)
+                    .impact(Impact::Structural)
+                    .note(
+                        "Cleaning rewrites the file, which removes this and replaces it with \
+                         this tool's own layout. That is a different fingerprint, not no \
+                         fingerprint, and it is shared with everyone else who uses this tool.",
+                    ),
+            );
         }
 
         let revisions = revision_count(data);
@@ -586,6 +610,54 @@ impl Handler for Pdf {
             ));
         }
 
+        // Pin the cross-reference style to a classic table.
+        //
+        // Three things come of this at once. The structural fingerprint above
+        // becomes a thing the rewrite genuinely removes, rather than a claim.
+        // A table is the overwhelmingly common shape, so the output joins the
+        // larger crowd. And an independent checker can verify a table by hand,
+        // which is what `fixtures/checkpdf.py` does; it cannot verify a stream,
+        // so leaving the style alone would have meant the output's structure
+        // going unchecked by anything but the library that wrote it.
+        //
+        // The cost is size: objects that were packed into compressed streams
+        // are written out plainly.
+        // XrefType does not implement PartialEq, so match rather than compare.
+        let was_stream = matches!(
+            doc.reference_table.cross_reference_type,
+            XrefType::CrossReferenceStream
+        );
+        doc.reference_table.cross_reference_type = XrefType::CrossReferenceTable;
+        // A document loaded from a cross-reference stream keeps that stream's
+        // dictionary as its trailer, so writing a table without clearing it
+        // produces a trailer that says `/Type /XRef` and carries the stream's
+        // own `/W` and `/Index`. Readers tolerate it; it is still malformed,
+        // and it is a fingerprint of this exact conversion.
+        for key in [
+            &b"Type"[..],
+            b"W",
+            b"Index",
+            b"Filter",
+            b"DecodeParms",
+            b"Length",
+            b"XRefStm",
+            // Flattening the revisions means there is no previous section to
+            // point at, whatever the old trailer said.
+            b"Prev",
+        ] {
+            doc.trailer.remove(key);
+        }
+        if was_stream {
+            changes.push(Change::rewritten(
+                Class::StructuralFingerprint,
+                "pdf:shape:pdf:xref-stream",
+                "the cross-reference style, which narrows the writer and its version",
+                Action::RewriteUniform,
+                Some("a cross-reference stream".to_string()),
+                Some("a cross-reference table".to_string()),
+            ));
+        }
+
         let mut out = Vec::new();
         doc.save_to(&mut out)
             .map_err(|e| Error::malformed(FormatId::Pdf, format!("writing: {e}")))?;
@@ -601,6 +673,42 @@ impl Handler for Pdf {
         }
         Ok(Outcome { data: out, changes })
     }
+}
+
+/// Ways a PDF's construction identifies the program that wrote it.
+///
+/// Each of these is something the rewrite removes, which is why reporting them
+/// is honest: a cleaned file has none of them, so the finding disappears rather
+/// than lingering as an accusation the tool cannot act on. What the rewrite puts
+/// in their place is this tool's own layout, which the note says plainly.
+fn writer_shape(data: &[u8]) -> Vec<(&'static str, &'static str)> {
+    let mut out = Vec::new();
+    let has = |needle: &[u8]| data.windows(needle.len()).any(|w| w == needle);
+
+    if has(b"/Linearized") {
+        out.push((
+            "pdf:linearized",
+            "linearised for byte-serving, which few writers do and which dates the file",
+        ));
+    }
+    if has(b"/ObjStm") {
+        out.push((
+            "pdf:object-streams",
+            "objects packed into compressed streams, a choice specific to the writer",
+        ));
+    }
+    if has(b"/XRef") && !has(b"\nxref") {
+        out.push((
+            "pdf:xref-stream",
+            "a cross-reference stream rather than a table, which narrows the writer and its version",
+        ));
+    }
+    // A missing /Producer is not a writer shape. It is conspicuous, and it is
+    // what this tool's own output looks like, so it belongs in the
+    // anonymity-set table (`pdf-no-info`, `pdf-dates-only`) where the report can
+    // say the result is distinctive. Calling it a fingerprint here would mean
+    // the engine accusing its own output of a thing it cannot fix.
+    out
 }
 
 /// A file identifier derived from the document's own objects.

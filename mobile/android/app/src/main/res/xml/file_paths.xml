@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleaned copies for sharing live in the cache and nowhere else. The original in
+  the gallery is not what gets forwarded, and the share path never writes to it.
+-->
+<paths>
+    <cache-path name="shared" path="." />
+</paths>

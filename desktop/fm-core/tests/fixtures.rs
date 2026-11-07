@@ -589,13 +589,25 @@ fn cleaned_pdfs_pass_an_independent_structural_check() {
 
     let output = std::process::Command::new("python3")
         .arg(&checker)
+        .arg("--cleaned")
         .args(&written)
         .output()
         .expect("python3 would not start");
     let report = String::from_utf8_lossy(&output.stdout).to_string();
     assert!(output.status.success(), "{report}");
 
-    // Flattening is the claim that matters here, and it is checked by a parser
+    // A file the checker cannot read is not a file that passed. Saying so
+    // loudly matters: a quiet skip is how a malformed trailer survived here
+    // once, because the output whose structure was least verified was exactly
+    // the output that went unchecked.
+    assert!(!report.contains("UNCHECKED"), "{report}");
+    assert_eq!(
+        report.matches("PASS").count(),
+        written.len(),
+        "not every file was checked:\n{report}"
+    );
+
+    // Flattening is the claim that matters most, and it is checked by a parser
     // that has never heard of this engine: the incremental fixture goes in with
     // two revisions and has to come out with one.
     for line in report.lines().filter(|l| l.contains("incremental")) {

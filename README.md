@@ -230,6 +230,96 @@ No network, ever. No accounts, no telemetry, no model downloads. Input and outpu
 both sit on disk and can be diffed by anyone who doubts the claim. Reproducible
 builds so a published binary can be checked against this source.
 
+Three of those are mechanically checkable, so they are checked rather than
+asserted:
+
+```
+tools/check-trust.sh          networking crates, socket symbols, licences
+tools/check-reproducible.sh   builds twice in two paths and compares
+```
+
+What they found, and the nuance each one exposed:
+
+- **No dependency in any of the four closures can do networking.** 426 crates,
+  nothing that speaks a network protocol or resolves a name.
+- **`fm-cli` imports no socket symbols at all**, so that binary cannot open one;
+  the claim is a property of the file rather than a promise about the source.
+  **`fm-gui` imports four**, and the honest reason is that a display server is
+  reached over a Unix socket and the X11 client in the clipboard stack can be
+  pointed at a remote display. Nothing of ours does networking; the window links
+  a stack that could. Anyone who wants the version that is provable from the
+  binary alone should use the command line.
+- **No dependency is under a licence with no permissive alternative**, which is
+  what a separately-licensed layer linking this engine requires. Nothing is
+  unstated either, which is the worse case because it cannot be reasoned about.
+- **The build was not reproducible and now is.** It was always deterministic:
+  two builds in the same directory give byte-identical output. But the build
+  path leaked in through build scripts that embed their `OUT_DIR`, so the same
+  source in two directories gave two different binaries. The `--remap-path-prefix`
+  flags in `tools/check-reproducible.sh` are therefore part of the release
+  recipe, not an optimisation, and the script fails if that stops being true.
+
+## Compliance, and the policy layer
+
+### What this tool is, legally
+
+It is a data-minimisation tool that runs entirely on the user's machine. It is
+not a processor of anyone's data: nothing leaves the device, there is no
+operator, and there is nothing to make a data-processing agreement about. For a
+business buyer the relevant framing is GDPR Article 5(1)(c) and Article 25, where
+removing what you do not need before a file leaves the building is exactly the
+measure those articles ask for. That is the commercial hook, and it is a true
+one.
+
+### Where it can get a user into trouble
+
+**Stripping metadata from a document under a litigation hold or a disclosure
+obligation can itself be unlawful.** Metadata is part of the document for
+evidentiary purposes in most jurisdictions, and removing it can be spoliation
+whatever the intent. This is why `normalise` exists and `falsify` does not: a
+fixed constant makes no false claim, while a plausible fake timestamp is a
+statement that is not true. It does not make the removal lawful.
+
+The tool's job is to make this visible rather than to decide it. The report names
+what would go before anything is written, the diff records it afterwards, and
+`inspect` exists precisely so that a document under hold can be examined without
+being touched. What is **not** built, and should be before this goes anywhere
+near a regulated environment, is a profile flag that refuses to run on a marked
+file or folder at all. Right now the only protection is the user not pressing
+the button.
+
+**Cleaning is not redaction.** `enforce` removes text that a filled rectangle
+only appeared to hide, which is a genuine fix for a genuine failure, but a tool
+that reflows or re-encodes is not a substitute for a redaction workflow with
+review and sign-off. Nothing here should be described as one.
+
+### The policy layer, and the problem in it
+
+Profiles are already a policy format in everything but name: a file, validated
+on load, carried between a desktop and a phone. What would make them an
+organisational policy is three things, none of which exist:
+
+1. **Locked cells.** A profile cannot currently say "Location is removed and the
+   user may not change that". Every cell is advisory, so a distributed profile is
+   a suggestion.
+2. **Provenance.** Nothing signs a profile, so nothing can tell an
+   administrator's profile from a file the user edited. Locked cells without
+   signing would be security theatre.
+3. **Precedence.** With more than one profile in play there is no rule for which
+   wins, and the safe answer (the strictest cell from any applicable profile)
+   is not obviously the one an administrator expects.
+
+**And the audit trail has a problem worth stating before anyone builds it.** An
+audit trail for this tool is a list of which files a person had, when, and what
+was in them. That is a more sensitive artefact than most of what it would be
+auditing. The mobile journal already runs into this: it is excluded from cloud
+backup and device transfer for exactly that reason. A compliance feature that
+produces a durable, centralised, exportable record of everyone's documents would
+undo the thing the product is for, so if it is built it should record **decisions
+and counts, not filenames and field values**, and that constraint should be in
+the design from the start rather than retrofitted after a customer asks for
+names.
+
 ## Deliverables
 
 ```
@@ -242,10 +332,12 @@ fixtures/          generated test files and an independent verifier
 ```
 
 ```
-cargo test                     # everything, 216 tests
+cargo test                      # everything
 cargo run -p fm-cli -- inspect ~/Pictures
 cargo run -p fm-gui
-python3 fixtures/generate.py   # the test files the engine is checked against
+python3 fixtures/generate.py    # the test files the engine is checked against
+tools/check-trust.sh            # the trust posture, checked rather than asserted
+tools/check-reproducible.sh     # two builds, two paths, one binary
 ```
 
 ### The window
@@ -317,7 +409,7 @@ cleaning engine, the redaction checks and the runner never will be.
 
 ## Where it stands
 
-**Tested, and the tests say what they test.** 216 of them. The engine is checked
+**Tested, and the tests say what they test.** 217 of them. The engine is checked
 against `fixtures/manifest.json`, which declares field by field what each
 generated fixture contains, so the manifest is the contract between the Python
 generator and the Rust engine and neither can quietly agree with itself. The
@@ -333,7 +425,10 @@ engine, which is the only kind of check that means anything about output.
   the failure a library reading its own output would hide. It also confirms the
   incremental fixture comes out with one revision instead of two. What it does
   not do is render a page, so "opens in Acrobat and looks right" is still
-  unverified.
+  unverified. Its first version skipped cross-reference streams quietly, which
+  meant the output whose structure was least verified was exactly the output
+  going unchecked; that is now a failure, and cleaning pins the output to a
+  classic table so there is nothing it cannot read.
 - **The window has never been on screen.** It was built where there is no display
   and no Xvfb. It links and runs as far as creating a window. Nobody should call
   the layout finished until it has been seen.
@@ -357,3 +452,11 @@ engine, which is the only kind of check that means anything about output.
 3. **Whether the mobile runner notifies on every sweep.** Silence is pleasant and
    also indistinguishable from the runner being dead, which is a bad property for
    a tool whose whole job is invisible.
+4. **Whether a profile can refuse to run.** Nothing currently stops `uniform`
+   being pointed at a folder under a litigation hold. A cell that marks a file or
+   a folder untouchable is the smallest thing that would help, and it has to come
+   before any regulated deployment rather than after.
+5. **What an audit trail is allowed to contain.** Decisions and counts can be
+   recorded safely. Filenames and field values cannot, because the record then
+   becomes a more sensitive document than the ones it audits. Settling this
+   before the feature exists is cheaper than settling it afterwards.
