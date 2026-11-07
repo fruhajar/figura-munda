@@ -127,9 +127,15 @@ quietly break.
 
 ## Open decisions
 
-1. **Does the sweep cover `Downloads` and `Documents` as well as `DCIM`?** More
-   coverage, but also more chance of touching a file an app is mid-way through
-   writing. The thirty-second settle rule is a heuristic, not a lock.
+1. **Which folders should the picker suggest?** `DCIM/Camera` is the clear case:
+   a photograph is geotagged the moment it is taken, the user did not choose to
+   put it there, and nothing in a camera roll is a document anyone has an
+   obligation about. `Downloads` is more coverage and more chance of catching a
+   file an app is mid-way through writing, which the thirty-second settle rule
+   makes unlikely rather than impossible. `Documents` should not be suggested at
+   all: it is where a file someone has an evidentiary obligation about would be,
+   and the runner is the one part of this tool that cleans in place with nobody
+   watching. The user can always grant it; the picker should not propose it.
 2. **Does the runner notify on every sweep, or only when it found something?**
    Silence is pleasant and also indistinguishable from the runner being dead,
    which is a bad property for a tool whose whole job is invisible.

@@ -271,22 +271,34 @@ removing what you do not need before a file leaves the building is exactly the
 measure those articles ask for. That is the commercial hook, and it is a true
 one.
 
-### Where it can get a user into trouble
+### What the operator is responsible for
 
-**Stripping metadata from a document under a litigation hold or a disclosure
-obligation can itself be unlawful.** Metadata is part of the document for
-evidentiary purposes in most jurisdictions, and removing it can be spoliation
-whatever the intent. This is why `normalise` exists and `falsify` does not: a
-fixed constant makes no false claim, while a plausible fake timestamp is a
-statement that is not true. It does not make the removal lawful.
+**Metadata is part of a document for evidentiary purposes in most
+jurisdictions.** A file under a litigation hold or a disclosure obligation should
+not be cleaned, and removing its metadata can be spoliation whatever the intent
+was. This is also why `normalise` exists and `falsify` does not: a fixed constant
+makes no false claim, while a plausible fake timestamp is a statement that is not
+true.
 
-The tool's job is to make this visible rather than to decide it. The report names
-what would go before anything is written, the diff records it afterwards, and
-`inspect` exists precisely so that a document under hold can be examined without
-being touched. What is **not** built, and should be before this goes anywhere
-near a regulated environment, is a profile flag that refuses to run on a marked
-file or folder at all. Right now the only protection is the user not pressing
-the button.
+Knowing that is the point of writing it down here. Acting on it is the operator's
+job, not the tool's, and the control is the obvious one: do not put such a file
+in a folder that is being cleaned, and do not point the tool at it. A document
+under hold belongs in a document management system that knows it is under hold.
+This tool cannot know, because there is nothing in a file that says so, and a
+guard that depended on the user marking the file would be the same act as the
+user not putting it there.
+
+So there is no legal-hold feature and there is not going to be one. What the tool
+does instead is refuse to be surprising: `inspect` examines without touching
+anything, the report names every field before a byte is written, the desktop
+window will not clean until the first phase has run, and anything that removes
+content a reader can see is listed in full and waits for a tick.
+
+The one place to be deliberate is the mobile runner, because it is the only part
+that cleans without anyone present: it sweeps the folders it was given, in place,
+on a schedule, including files that arrived long after those folders were chosen.
+That is what it is for, and it is why `DCIM/Camera` is the example and
+`Documents` is not.
 
 **Cleaning is not redaction.** `enforce` removes text that a filled rectangle
 only appeared to hide, which is a genuine fix for a genuine failure, but a tool
@@ -452,11 +464,7 @@ engine, which is the only kind of check that means anything about output.
 3. **Whether the mobile runner notifies on every sweep.** Silence is pleasant and
    also indistinguishable from the runner being dead, which is a bad property for
    a tool whose whole job is invisible.
-4. **Whether a profile can refuse to run.** Nothing currently stops `uniform`
-   being pointed at a folder under a litigation hold. A cell that marks a file or
-   a folder untouchable is the smallest thing that would help, and it has to come
-   before any regulated deployment rather than after.
-5. **What an audit trail is allowed to contain.** Decisions and counts can be
+4. **What an audit trail is allowed to contain.** Decisions and counts can be
    recorded safely. Filenames and field values cannot, because the record then
    becomes a more sensitive document than the ones it audits. Settling this
    before the feature exists is cheaper than settling it afterwards.
