@@ -86,7 +86,7 @@ pub fn inspect(path: &Path) -> Vec<Finding> {
 fn list_xattrs(path: &Path) -> Vec<(String, String)> {
     let Ok(names) = xattr::list(path) else { return Vec::new() };
     names
-        .filter_map(|n| {
+        .map(|n| {
             let name = n.to_string_lossy().to_string();
             let value = xattr::get(path, &n)
                 .ok()
@@ -99,7 +99,7 @@ fn list_xattrs(path: &Path) -> Vec<(String, String)> {
                     }
                 })
                 .unwrap_or_default();
-            Some((name, value))
+            (name, value)
         })
         .collect()
 }

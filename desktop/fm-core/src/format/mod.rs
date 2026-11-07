@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 pub mod exif;
 pub mod iptc;
 pub mod jpeg;
+pub mod mp4;
 pub mod ooxml;
 pub mod pdf;
 pub mod png;
@@ -81,6 +82,7 @@ pub fn handlers() -> &'static [&'static dyn Handler] {
         &png::Png,
         &ooxml::Ooxml,
         &pdf::Pdf,
+        &mp4::Mp4,
         // SVG last: it is the only text format, so it must not shadow a
         // container that happens to contain the string "<svg".
         &svg::Svg,

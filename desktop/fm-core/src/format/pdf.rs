@@ -67,7 +67,7 @@ fn signature_in(doc: &Document) -> Option<String> {
     // name. Both say `/Sig`, so the named one has to be preferred rather than
     // whichever comes first by object number.
     let mut unnamed = false;
-    for (_, object) in doc.objects.iter() {
+    for object in doc.objects.values() {
         let Object::Dictionary(d) = object else { continue };
         let is_sig = matches!(d.get(b"Type").and_then(|o| o.as_name()), Ok(b"Sig"))
             || matches!(d.get(b"FT").and_then(|o| o.as_name()), Ok(b"Sig"));

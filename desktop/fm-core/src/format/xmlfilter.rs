@@ -12,6 +12,10 @@ use quick_xml::events::{BytesStart, BytesText, Event};
 use quick_xml::{Reader, Writer};
 
 type Attrs = Vec<(String, String)>;
+/// Predicate over an attribute's qualified name.
+type AttrFilter<'a> = Box<dyn Fn(&str) -> bool + 'a>;
+/// Predicate over an element's qualified name and its attributes.
+type ElementFilter<'a> = Box<dyn Fn(&str, &Attrs) -> bool + 'a>;
 
 #[derive(Default)]
 pub struct Rules<'a> {
@@ -24,10 +28,10 @@ pub struct Rules<'a> {
     /// Element qnames kept, with their text replaced.
     pub set: Vec<(&'a str, String)>,
     /// Attribute qnames to strip, by predicate.
-    pub drop_attr: Option<Box<dyn Fn(&str) -> bool + 'a>>,
+    pub drop_attr: Option<AttrFilter<'a>>,
     /// Elements to drop by qname and attributes, for relationship entries and
     /// content-type overrides that point at a part being removed.
-    pub drop_matching: Option<Box<dyn Fn(&str, &Attrs) -> bool + 'a>>,
+    pub drop_matching: Option<ElementFilter<'a>>,
 }
 
 impl<'a> Rules<'a> {

@@ -248,13 +248,10 @@ impl Handler for Jpeg {
                     }
                     out.push(s);
                 }
-                Kind::Photoshop => match iptc::clean(&s.payload[PS_SIG.len()..], profile, &mut changes) {
-                    Some(rest) => {
-                        let mut payload = PS_SIG.to_vec();
-                        payload.extend_from_slice(&rest);
-                        out.push(Segment { marker: APP13, payload });
-                    }
-                    None => {}
+                Kind::Photoshop => if let Some(rest) = iptc::clean(&s.payload[PS_SIG.len()..], profile, &mut changes) {
+                    let mut payload = PS_SIG.to_vec();
+                    payload.extend_from_slice(&rest);
+                    out.push(Segment { marker: APP13, payload });
                 },
                 Kind::Comment => {
                     if profile.alters(Class::Identity) {

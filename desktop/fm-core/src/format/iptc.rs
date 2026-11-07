@@ -31,7 +31,7 @@ fn parse_resources(irb: &[u8]) -> Vec<Resource> {
         let id = u16::from_be_bytes([irb[at + 4], irb[at + 5]]);
         // Pascal-style name, padded so the whole field is even-length.
         let name_len = irb[at + 6] as usize;
-        let name_field = 1 + name_len + usize::from(name_len % 2 == 0);
+        let name_field = 1 + name_len + usize::from(name_len.is_multiple_of(2));
         let name = irb[at + 7..(at + 7 + name_len).min(irb.len())].to_vec();
         let size_at = at + 6 + name_field;
         if size_at + 4 > irb.len() {

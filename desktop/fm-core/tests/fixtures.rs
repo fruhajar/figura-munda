@@ -459,6 +459,7 @@ fn every_fixture_is_either_cleaned_verifiably_or_refused_with_a_reason() {
         "report-redacted.pdf",
         "report-incremental.pdf",
         "signed.pdf",
+        "clip.mp4",
     ];
     for name in names {
         let Some((path, data)) = fixture(name) else { continue };
@@ -481,4 +482,67 @@ fn every_fixture_is_either_cleaned_verifiably_or_refused_with_a_reason() {
             }
         }
     }
+}
+
+#[test]
+fn the_clip_reveals_where_and_on_what_it_was_recorded() {
+    let (path, data) = fixture_or_skip!("clip.mp4");
+    let ins = inspect_bytes(&data, ext(&path).as_deref()).unwrap();
+    assert_eq!(ins.format, FormatId::Mp4);
+
+    let location = values(&ins, Class::Location).join(" | ");
+    assert!(location.contains("+50.0755+014.4378"), "{location}");
+    let device = values(&ins, Class::Device).join(" | ");
+    assert!(device.contains("iPhone 14 Pro"), "{device}");
+    assert!(device.contains("Apple"), "{device}");
+    assert!(values(&ins, Class::Identity).join(" ").contains("Marie Dvorakova"));
+    // The mvhd creation time, which the manifest pins to the same instant.
+    assert!(values(&ins, Class::Time).join(" ").contains("2024-06-14T19:42:07Z"));
+    assert!(ins.shape.contains(&"mp4:udta".to_string()));
+}
+
+/// The output has to be a file a player will still open, and the only honest
+/// check for that is an independent demuxer. `ffprobe` is the one to hand.
+#[test]
+fn a_cleaned_clip_still_demuxes() {
+    let (path, data) = fixture_or_skip!("clip.mp4");
+    if std::process::Command::new("ffprobe").arg("-version").output().is_err() {
+        eprintln!("skipping: ffprobe is not installed");
+        return;
+    }
+    let dir = std::env::temp_dir().join("fm-core-mp4-test");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    for profile in Profile::builtins() {
+        if profile.inert() {
+            continue;
+        }
+        let cleaned = clean_bytes(&data, ext(&path).as_deref(), &profile).unwrap();
+        assert!(cleaned.verification.clean(), "{:?}", cleaned.verification.leftovers);
+
+        let out = dir.join(format!("{}.mp4", profile.name));
+        std::fs::write(&out, &cleaned.data).unwrap();
+        let probe = std::process::Command::new("ffprobe")
+            .args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"])
+            .arg(&out)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&probe.stderr).to_string();
+        let stdout = String::from_utf8_lossy(&probe.stdout).trim().to_string();
+        assert!(probe.status.success() && stderr.is_empty(), "{}: ffprobe said {stderr}", profile.name);
+        let duration: f64 = stdout.parse().unwrap_or(0.0);
+        assert!(duration > 0.0, "{}: ffprobe found no duration", profile.name);
+
+        // And ffprobe must no longer see the metadata either.
+        let tags = std::process::Command::new("ffprobe")
+            .args(["-v", "error", "-show_entries", "format_tags", "-of", "default=noprint_wrappers=1"])
+            .arg(&out)
+            .output()
+            .unwrap();
+        let tags = String::from_utf8_lossy(&tags.stdout).to_string();
+        assert!(!tags.contains("Marie"), "{}: ffprobe still sees {tags}", profile.name);
+        assert!(!tags.contains("iPhone"), "{}: ffprobe still sees {tags}", profile.name);
+        assert!(!tags.contains("50.07"), "{}: ffprobe still sees {tags}", profile.name);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

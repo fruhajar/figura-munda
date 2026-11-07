@@ -559,8 +559,8 @@ pub fn tag_info(space: Space, tag: u16) -> Option<TagInfo> {
         }),
         (Space::Exif, 0x9003) => info(Class::Time, "date and time the picture was taken"),
         (Space::Exif, 0x9004) => info(Class::Time, "date and time it was digitised"),
-        (Space::Exif, 0x9290 | 0x9291 | 0x9292) => info(Class::Time, "sub-second precision on the capture time"),
-        (Space::Exif, 0x9010 | 0x9011 | 0x9012) => {
+        (Space::Exif, 0x9290..=0x9292) => info(Class::Time, "sub-second precision on the capture time"),
+        (Space::Exif, 0x9010..=0x9012) => {
             info(Class::Location, "time zone offset, which narrows where you were")
         }
         (Space::Exif, 0x927C) => info(Class::Device, "maker notes, an opaque block that usually repeats the serial number"),
