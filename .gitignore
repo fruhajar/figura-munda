@@ -12,3 +12,6 @@ Cargo.lock.orig
 /fixtures/out
 __pycache__/
 *.pyc
+
+# Cargo build output
+/desktop/target
