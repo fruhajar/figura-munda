@@ -354,3 +354,131 @@ fn cleaning_the_letter_accepts_the_insertion_and_discards_the_deletion() {
     assert!(!xml.contains("rsid"), "{xml}");
     assert!(!xml.contains("commentReference"), "{xml}");
 }
+
+#[test]
+fn the_redacted_report_still_holds_the_account_number() {
+    let (path, data) = fixture_or_skip!("report-redacted.pdf");
+    let ins = inspect_bytes(&data, ext(&path).as_deref()).unwrap();
+    assert_eq!(ins.format, FormatId::Pdf);
+
+    let covered = ins
+        .in_class(Class::RedactionIntegrity)
+        .next()
+        .expect("the covered text was not found");
+    assert!(
+        covered.value.as_deref().unwrap().contains("CZ65 0800 0000 1920 0014 5399"),
+        "{:?}",
+        covered.value
+    );
+
+    assert!(values(&ins, Class::Identity).join(" ").contains("Marie Dvorakova"));
+    assert!(values(&ins, Class::Device).join(" ").contains("Acrobat Distiller 23.0"));
+    assert!(values(&ins, Class::Correlation).join(" ").contains("9f2c41a055b14e7c9b306d1e2a77c004"));
+    assert_eq!(ins.in_class(Class::HiddenPayload).count(), 2, "attachment and JavaScript");
+}
+
+#[test]
+fn standard_reports_the_failed_redaction_and_strict_enforces_it() {
+    let (path, data) = fixture_or_skip!("report-redacted.pdf");
+
+    let reported = clean_bytes(&data, ext(&path).as_deref(), &Profile::standard()).unwrap();
+    assert!(
+        String::from_utf8_lossy(&reported.data).contains("CZ65 0800"),
+        "standard must report the redaction, not silently change the page"
+    );
+
+    let enforced = clean_bytes(&data, ext(&path).as_deref(), &Profile::strict()).unwrap();
+    assert!(
+        !String::from_utf8_lossy(&enforced.data).contains("CZ65 0800"),
+        "strict must actually remove the covered text"
+    );
+    let after = inspect_bytes(&enforced.data, Some("pdf")).unwrap();
+    assert!(after.in_class(Class::RedactionIntegrity).next().is_none());
+    assert!(enforced.verification.clean(), "{:?}", enforced.verification.leftovers);
+
+    // Removing text is a content change, so it has to be flagged beforehand.
+    let destructive = fm_core::report::destructive(&enforced.before, &Profile::strict());
+    assert!(destructive.iter().any(|f| f.class == Class::RedactionIntegrity));
+}
+
+#[test]
+fn the_incremental_report_gives_up_its_superseded_figure() {
+    let (path, data) = fixture_or_skip!("report-incremental.pdf");
+    let ins = inspect_bytes(&data, ext(&path).as_deref()).unwrap();
+
+    let history = ins
+        .in_class(Class::History)
+        .find(|f| f.locator == "pdf:incremental")
+        .expect("the earlier revision was not reported");
+    let shown = history.value.as_deref().unwrap_or_default();
+    assert!(shown.contains("2 revisions"), "{shown}");
+    assert!(
+        shown.contains("1,950,000") || shown.contains("1 950 000"),
+        "the recoverable figure was not shown to the user: {shown}"
+    );
+}
+
+#[test]
+fn cleaning_flattens_the_revisions_away() {
+    let (path, data) = fixture_or_skip!("report-incremental.pdf");
+    let cleaned = clean_bytes(&data, ext(&path).as_deref(), &Profile::standard()).unwrap();
+    assert!(cleaned.verification.clean(), "{:?}", cleaned.verification.leftovers);
+
+    let text = String::from_utf8_lossy(&cleaned.data).to_string();
+    assert!(!text.contains("1,950,000"), "the superseded revision survived");
+    assert!(!text.contains("/Prev"), "the revision chain survived");
+    let after = inspect_bytes(&cleaned.data, Some("pdf")).unwrap();
+    assert!(after.in_class(Class::History).next().is_none());
+
+    // And the current revision is intact: v2 replaced the figure with a word.
+    assert!(text.contains("[REDACTED]"), "the current revision's text was lost");
+}
+
+#[test]
+fn a_signed_pdf_is_refused_and_says_why() {
+    let (path, data) = fixture_or_skip!("signed.pdf");
+    let ins = inspect_bytes(&data, ext(&path).as_deref()).unwrap();
+    assert!(ins.refused(), "a signed document must not be cleaned silently");
+    assert!(ins.blockers[0].reason.contains("signed"));
+    assert!(ins.blockers[0].detail.contains("Marie Dvorakova"));
+
+    match clean_bytes(&data, ext(&path).as_deref(), &Profile::standard()) {
+        Err(fm_core::Error::Refused(why)) => assert!(why.contains("signature"), "{why}"),
+        Err(e) => panic!("expected a refusal, got the error {e}"),
+        Ok(_) => panic!("a signed document was cleaned instead of refused"),
+    }
+}
+
+#[test]
+fn every_fixture_is_either_cleaned_verifiably_or_refused_with_a_reason() {
+    let names = [
+        "photo-phone.jpg",
+        "screenshot.png",
+        "diagram.svg",
+        "letter.docx",
+        "report-redacted.pdf",
+        "report-incremental.pdf",
+        "signed.pdf",
+    ];
+    for name in names {
+        let Some((path, data)) = fixture(name) else { continue };
+        for profile in Profile::builtins() {
+            if profile.inert() {
+                continue;
+            }
+            match clean_bytes(&data, ext(&path).as_deref(), &profile) {
+                Ok(cleaned) => assert!(
+                    cleaned.verification.clean(),
+                    "{name} under {}: {:?}",
+                    profile.name,
+                    cleaned.verification.leftovers.iter().map(|f| &f.locator).collect::<Vec<_>>()
+                ),
+                Err(fm_core::Error::Refused(why)) => {
+                    assert!(!why.is_empty(), "{name} refused with no reason");
+                    assert_eq!(name, "signed.pdf", "{name} was refused unexpectedly: {why}");
+                }
+                Err(e) => panic!("{name} under {}: {e}", profile.name),
+            }
+        }
+    }
+}

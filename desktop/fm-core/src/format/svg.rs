@@ -23,11 +23,6 @@ const EDITOR_PREFIXES: &[&str] = &[
 /// Prefixes that only ever appear inside a metadata block.
 const METADATA_PREFIXES: &[&str] = &["dc", "cc", "rdf", "xmp", "xmpMM", "pdf", "photoshop", "tiff", "exif"];
 
-fn prefix_of(qname: &[u8]) -> Option<&str> {
-    let s = std::str::from_utf8(qname).ok()?;
-    s.split_once(':').map(|(p, _)| p)
-}
-
 fn local_of(qname: &[u8]) -> &str {
     std::str::from_utf8(qname)
         .unwrap_or_default()

@@ -134,9 +134,25 @@ pub struct Verification {
 /// for a day, the first of the month for a month, the shared constant for
 /// `normalise`. That makes verify mode able to fail a handler that wrote the
 /// original value back out, which is the mistake worth catching.
-fn is_leftover(f: &Finding, profile: &Profile) -> bool {
+fn is_leftover(f: &Finding, profile: &Profile, done: &[Change]) -> bool {
     if f.protected || f.advisory {
         return false;
+    }
+    // A field that was deliberately replaced is supposed to still be there, and
+    // the diff says what it was replaced with. Checking the value against that
+    // is how a replacement is told apart from a leftover.
+    //
+    // This cannot be judged from the output alone, which is why verification
+    // takes the diff as well: a PDF file identifier that was rewritten and one
+    // that was never touched look identical in the finished file.
+    if let Some(change) = done.iter().find(|c| c.locator == f.locator) {
+        if change.action == Action::Replace {
+            return match (&change.after, &f.value) {
+                (Some(written), Some(found)) => !found.contains(written.as_str()),
+                (None, _) => true,
+                (_, None) => false,
+            };
+        }
     }
     let parsed = f.value.as_deref().and_then(crate::timeutil::parse_loose);
     match profile.action(f.class) {
@@ -161,11 +177,19 @@ fn is_leftover(f: &Finding, profile: &Profile) -> bool {
 }
 
 impl Verification {
+    /// Verify an output against a profile with no knowledge of what was done to
+    /// it. Use this to check a file that arrived from somewhere else; a field
+    /// that was legitimately replaced cannot be recognised as such here.
     pub fn of(output: &Inspection, profile: &Profile) -> Verification {
+        Self::after(output, profile, &[])
+    }
+
+    /// Verify an output against a profile and the diff that produced it.
+    pub fn after(output: &Inspection, profile: &Profile, done: &[Change]) -> Verification {
         let leftovers = output
             .findings
             .iter()
-            .filter(|f| is_leftover(f, profile))
+            .filter(|f| is_leftover(f, profile, done))
             .cloned()
             .collect();
         Verification {

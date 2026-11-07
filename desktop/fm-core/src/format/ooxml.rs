@@ -481,7 +481,6 @@ impl Handler for Ooxml {
 
     fn clean(&self, data: &[u8], profile: &Profile) -> Result<Outcome> {
         let mut members = zip::read(data)?;
-        let before = self.inspect(data)?;
         let mut changes = Vec::new();
         if profile.inert() {
             return Ok(Outcome::unchanged(data));

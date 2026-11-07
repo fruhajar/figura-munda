@@ -57,7 +57,7 @@ pub fn clean_bytes(data: &[u8], ext: Option<&str>, profile: &Profile) -> Result<
     }
     let outcome = handler.clean(data, profile)?;
     let after = handler.inspect(&outcome.data)?;
-    let verification = Verification::of(&after, profile);
+    let verification = Verification::after(&after, profile, &outcome.changes);
     let counts = Counts::of(&before, &outcome.changes);
     Ok(Cleaned {
         before,

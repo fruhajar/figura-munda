@@ -12,6 +12,7 @@ pub mod exif;
 pub mod iptc;
 pub mod jpeg;
 pub mod ooxml;
+pub mod pdf;
 pub mod png;
 pub mod svg;
 pub mod xmlfilter;
@@ -79,6 +80,7 @@ pub fn handlers() -> &'static [&'static dyn Handler] {
         &jpeg::Jpeg,
         &png::Png,
         &ooxml::Ooxml,
+        &pdf::Pdf,
         // SVG last: it is the only text format, so it must not shadow a
         // container that happens to contain the string "<svg".
         &svg::Svg,
