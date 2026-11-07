@@ -15,3 +15,10 @@ __pycache__/
 
 # Cargo build output
 /desktop/target
+
+# Android build output and the native libraries cargo-ndk drops in.
+/mobile/android/.gradle
+/mobile/android/build
+/mobile/android/app/build
+/mobile/android/app/src/main/jniLibs
+/mobile/android/local.properties

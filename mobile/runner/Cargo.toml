@@ -1,0 +1,21 @@
+[package]
+name = "fm-runner"
+description = "Periodic cleaning, for the phone's background runner."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fm-core = { path = "../../desktop/fm-core" }
+serde = { workspace = true }
+serde_json.workspace = true
+toml.workspace = true
+
+# Android only, and not compiled anywhere else. See mobile/README.md: the JNI
+# layer is the interface worked out in full, not a thing that has been built.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
+[lib]
+# A plain library everywhere, plus a shared object for the Android host to load.
+crate-type = ["lib", "cdylib"]

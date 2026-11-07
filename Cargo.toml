@@ -1,5 +1,10 @@
 [workspace]
-members = ["fm-core", "fm-cli", "fm-gui"]
+members = [
+    "desktop/fm-core",
+    "desktop/fm-cli",
+    "desktop/fm-gui",
+    "mobile/runner",
+]
 resolver = "2"
 
 [workspace.package]
