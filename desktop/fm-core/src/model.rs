@@ -116,6 +116,20 @@ pub enum Action {
     Reset,
 }
 
+/// Every action, in the order the profile editor should offer them.
+pub const ALL_ACTIONS: [Action; 10] = [
+    Action::Keep,
+    Action::ReportOnly,
+    Action::Remove,
+    Action::Replace,
+    Action::CoarsenDay,
+    Action::CoarsenMonth,
+    Action::Normalise,
+    Action::Enforce,
+    Action::RewriteUniform,
+    Action::Reset,
+];
+
 impl Action {
     pub fn label(self) -> &'static str {
         match self {
