@@ -6,24 +6,49 @@ This project is **MPL-2.0**, and contributions stay MPL-2.0. There is no copyrig
 assignment and no CLA to sign.
 
 That is a deliberate choice, and it works because of how the commercial side is
-structured. A separate, private layer (batch processing, watched folders, policy
-files, audit reports) **links** this engine rather than absorbing its source. MPL's
-copyleft is file-level, so linking is permitted and the paid layer stays proprietary
-without anyone's contribution being relicensed. If a feature ever needs contributed
-code pulled into a proprietary file, the answer is to keep that feature open, not to
-ask contributors for an assignment.
+structured. A separate, private layer **links** this engine rather than absorbing
+its source. MPL's copyleft is file-level, so linking is permitted and the paid
+layer stays proprietary without anyone's contribution being relicensed. If a
+feature ever needs contributed code pulled into a proprietary file, the answer is
+to keep that feature open, not to ask contributors for an assignment.
+
+**The boundary moved, and it moved outward.** This file used to put batch
+processing and watched folders on the closed side. They are open. A tool that
+cleans one file at a time is a tool nobody leaves switched on, and a mobile
+runner that is not free is a movement that does not spread. Folder runs,
+profiles, the window and the periodic sweep are all MPL and will stay that way.
+
+What remains available to close is organisation-shaped: distributing a policy to
+a fleet, dashboards across many machines, compliance audit trails, multi-user
+management.
 
 Two consequences worth stating plainly:
 
 - **Nobody can close a fork of the cleaning engine.** Modified MPL files stay MPL.
   For a privacy tool that is the point, not a side effect.
-- **The closed layer will never be security-relevant.** Scheduling, dashboards,
-  reporting and multi-user management may be closed. The inspection logic, the
-  cleaning engine and the redaction checks never will be.
+- **The closed layer will never be security-relevant.** Fleet policy, dashboards
+  across many machines and compliance reporting may be closed. The inspection
+  logic, the cleaning engine, the redaction checks and the runner never will be.
 
 Sign off commits under the [Developer Certificate of
 Origin](https://developercertificate.org/) with `git commit -s`. That is the whole
 process.
+
+## How the code reads
+
+Match what is there. Two habits in this codebase are worth knowing before the
+first patch:
+
+**Comments say why, not what.** The signature already says what. A comment earns
+its place by recording a unit, a frame of reference, an approximation known to be
+wrong, or a decision whose opposite looks equally reasonable until you know the
+reason. The MP4 handler's note about sample offsets is the model: it exists
+because getting it wrong produces a file that plays as garbage rather than one
+that fails.
+
+**Tests are named as claims.** `a_rectangle_drawn_before_the_text_is_not_a_redaction`
+rather than `test_redaction_3`. A test whose name is a sentence about behaviour
+survives a refactor; one named after a line number does not.
 
 ## Test fixtures
 
@@ -37,11 +62,17 @@ collection of files full of other people's personal data.
 
 ## Scope
 
-Read `README.md` first. Two decisions are already settled and are not open for
-relitigation without new evidence:
+Read `README.md` first. These are settled and not open for relitigation without
+new evidence:
 
 - **No browser extension.** Transparent upload interception is not buildable under
   MV3, and the content-script workaround breaks on every site redesign. The reasoning
   is in the README.
-- **Never remove ICC profiles, tagged-PDF structure, or anything inside a signed
-  PDF.** Stripping those is a regression, not a protection.
+- **Never remove ICC profiles, tagged-PDF structure, EXIF orientation, SVG
+  `<title>` and `<desc>`, or anything inside a signed PDF.** Stripping those is a
+  regression, not a protection: the first three change how the file looks and the
+  rest is what a screen reader reads out.
+- **Never delete a hidden worksheet or a slide's speaker notes.** They are
+  reported, in those words, and left alone. Deleting part of a document is the
+  user's decision, and a metadata tool that quietly makes it has exceeded its
+  remit.
