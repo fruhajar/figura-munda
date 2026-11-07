@@ -34,20 +34,57 @@ impl Counts {
     }
 
     pub fn sentence(&self) -> String {
-        format!(
-            "{} field{} across {} class{}, {} removed, {} preserved.",
+        let classes = format!(
+            "{} field{} across {} class{}",
             self.fields,
             plural(self.fields),
             self.classes,
-            if self.classes == 1 { "" } else { "es" },
-            self.removed,
-            self.preserved
-        )
+            if self.classes == 1 { "" } else { "es" }
+        );
+        if self.removed == 0 {
+            return format!("{classes}.");
+        }
+        format!("{classes}, {} removed, {} preserved.", self.removed, self.preserved)
     }
 }
 
 fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
+}
+
+/// One line of a report: a distinct fact, and how many fields carry it.
+pub struct Row<'a> {
+    pub label: &'a str,
+    pub value: Option<&'a str>,
+    pub note: Option<&'a str>,
+    pub protected: bool,
+    pub advisory: bool,
+    /// How many separate fields say this same thing.
+    pub places: usize,
+}
+
+impl Row<'_> {
+    /// The suffix that explains a repeated fact without repeating it.
+    pub fn places_note(&self) -> Option<String> {
+        (self.places > 1).then(|| format!("in {} places", self.places))
+    }
+}
+
+/// How alarming a class is, worst first. Used to order the headline and to pick
+/// the one line shown for a file in a list of many.
+fn severity(class: Class) -> u8 {
+    match class {
+        Class::RedactionIntegrity => 0,
+        Class::History => 1,
+        Class::HiddenPayload => 2,
+        Class::Location => 3,
+        Class::Identity => 4,
+        Class::Correlation => 5,
+        Class::Device => 6,
+        Class::Time => 7,
+        Class::StructuralFingerprint => 8,
+        Class::Filesystem => 9,
+    }
 }
 
 /// The report: plain language first, fields second.
@@ -63,14 +100,21 @@ impl<'a> Report<'a> {
 
     /// "This photo records where it was taken, which phone took it, and still
     /// contains the uncropped original."
+    ///
+    /// At most three classes, worst first. A sentence listing all ten is a field
+    /// dump with commas in it, which is the thing this is meant not to be; the
+    /// rest are a heading away, under the counts.
     pub fn headline(&self) -> String {
-        let classes = self.inspection.classes();
+        let mut classes = self.inspection.classes();
         if classes.is_empty() {
             return format!(
                 "This {} reveals nothing this tool knows how to look for.",
                 self.inspection.format.noun()
             );
         }
+        classes.sort_by_key(|c| severity(*c));
+        let total = classes.len();
+        classes.truncate(3);
         let mut parts: Vec<String> = classes.iter().map(|c| c.sentence().to_string()).collect();
         let last = parts.pop().unwrap();
         let joined = if parts.is_empty() {
@@ -78,7 +122,37 @@ impl<'a> Report<'a> {
         } else {
             format!("{}, and {}", parts.join(", "), last)
         };
-        format!("This {} {}.", self.inspection.format.noun(), joined)
+        let rest = match total.saturating_sub(3) {
+            0 => String::new(),
+            1 => " There is one more kind of thing in it as well.".to_string(),
+            n => format!(" There are {n} more kinds of thing in it as well."),
+        };
+        format!("This {} {}.{rest}", self.inspection.format.noun(), joined)
+    }
+
+    /// One row per distinct thing, rather than one per field: the same name in
+    /// three containers is one fact about the file, and saying it three times
+    /// reads like a field dump.
+    pub fn rows(&self, class: Class) -> Vec<Row<'a>> {
+        let mut rows: Vec<Row<'a>> = Vec::new();
+        for f in self.inspection.in_class(class) {
+            match rows
+                .iter_mut()
+                .find(|r| r.label == f.label && r.value == f.value.as_deref())
+            {
+                Some(r) => r.places += 1,
+                None => rows.push(Row {
+                    label: &f.label,
+                    value: f.value.as_deref(),
+                    note: f.note.as_deref(),
+                    protected: f.protected,
+                    advisory: f.advisory,
+                    places: 1,
+                }),
+            }
+        }
+        rows.sort_by_key(|r| (r.protected, r.advisory));
+        rows
     }
 
     /// Findings grouped by class, in the README's order, protected ones last.
@@ -96,23 +170,11 @@ impl<'a> Report<'a> {
     /// The single most alarming thing in the file, for a one-line summary in a
     /// list of many files.
     pub fn worst(&self) -> Option<&Finding> {
-        let rank = |f: &Finding| match f.class {
-            Class::RedactionIntegrity => 0,
-            Class::History => 1,
-            Class::HiddenPayload => 2,
-            Class::Location => 3,
-            Class::Identity => 4,
-            Class::Correlation => 5,
-            Class::Device => 6,
-            Class::Time => 7,
-            Class::StructuralFingerprint => 8,
-            Class::Filesystem => 9,
-        };
         self.inspection
             .findings
             .iter()
-            .filter(|f| !f.protected)
-            .min_by_key(|f| rank(f))
+            .filter(|f| !f.protected && !f.advisory)
+            .min_by_key(|f| severity(f.class))
     }
 }
 
@@ -122,7 +184,12 @@ impl<'a> Report<'a> {
 /// profile said it would alter, which means the handler did not do what the
 /// profile promised.
 pub struct Verification {
+    /// Fields the profile said would go, which did not.
     pub leftovers: Vec<Finding>,
+    /// Fields that are present, are in a class the profile alters, and cannot
+    /// be judged from the finished file: a replacement and an untouched value
+    /// look the same. Not failures, and not passes either.
+    pub unresolved: Vec<Finding>,
     pub signature: Option<&'static Signature>,
     pub remaining: Vec<Finding>,
 }
@@ -186,14 +253,18 @@ impl Verification {
 
     /// Verify an output against a profile and the diff that produced it.
     pub fn after(output: &Inspection, profile: &Profile, done: &[Change]) -> Verification {
-        let leftovers = output
-            .findings
-            .iter()
-            .filter(|f| is_leftover(f, profile, done))
-            .cloned()
-            .collect();
+        let suspect: Vec<&Finding> =
+            output.findings.iter().filter(|f| is_leftover(f, profile, done)).collect();
+        // A replaceable field that the diff does not account for is unresolved
+        // rather than failed: nothing in the file can settle it either way.
+        let judged = |f: &Finding| !f.replaceable || done.iter().any(|c| c.locator == f.locator);
+        let leftovers: Vec<Finding> =
+            suspect.iter().filter(|f| judged(f)).map(|f| (*f).clone()).collect();
+        let unresolved: Vec<Finding> =
+            suspect.iter().filter(|f| !judged(f)).map(|f| (*f).clone()).collect();
         Verification {
             leftovers,
+            unresolved,
             signature: anonset::classify(output.format, &output.shape),
             remaining: output
                 .findings
@@ -265,13 +336,22 @@ pub fn text_report(inspection: &Inspection, name: &str) -> String {
     for b in &inspection.blockers {
         out.push_str(&format!("\nREFUSED: {} - {}\n", b.reason, b.detail));
     }
-    for (class, findings) in report.grouped() {
+    for (class, _) in report.grouped() {
         out.push_str(&format!("\n  {}\n", class.title()));
-        for f in findings {
-            let value = f.value.as_deref().unwrap_or("present");
-            let mark = if f.protected { " [kept on purpose]" } else { "" };
-            out.push_str(&format!("    {:<26} {}{}\n", f.label, truncate(value, 64), mark));
-            if let Some(n) = &f.note {
+        for row in report.rows(class) {
+            let value = row.value.unwrap_or("present");
+            let mut suffix = String::new();
+            if let Some(places) = row.places_note() {
+                suffix.push_str(&format!(" [{places}]"));
+            }
+            if row.protected {
+                suffix.push_str(" [kept on purpose]");
+            }
+            if row.advisory {
+                suffix.push_str(" [reported only]");
+            }
+            out.push_str(&format!("    {:<34} {}{}\n", row.label, truncate(value, 56), suffix));
+            if let Some(n) = row.note {
                 out.push_str(&format!("      {n}\n"));
             }
         }
@@ -322,6 +402,15 @@ pub fn text_verify(v: &Verification) -> String {
         out.push_str("FAILED: the output still contains\n");
         for f in &v.leftovers {
             out.push_str(&format!("    {} ({}) {}\n", f.label, f.class.title(), f.locator));
+        }
+    }
+    if !v.unresolved.is_empty() {
+        out.push_str(
+            "Cannot be judged from this file alone, because a replaced value and an untouched \n\
+             one look identical here:\n",
+        );
+        for f in &v.unresolved {
+            out.push_str(&format!("    {} ({})\n", f.label, f.class.title()));
         }
     }
     out.push_str(&format!("{}\n", v.anonymity_sentence()));
@@ -383,15 +472,54 @@ mod tests {
     #[test]
     fn the_headline_reads_as_a_sentence() {
         let h = Report::new(&photo()).headline();
-        assert!(h.starts_with("This photo identifies what took or wrote it,"), "{h}");
+        // Worst first: the uncropped original beats the place, which beats the
+        // camera model.
+        assert!(h.starts_with("This photo contains more than it shows,"), "{h}");
         assert!(h.contains("records where it was made"), "{h}");
-        assert!(h.ends_with("contains more than it shows."), "{h}");
+        assert!(h.ends_with("identifies what took or wrote it."), "{h}");
     }
 
     #[test]
     fn a_clean_file_says_so() {
         let ins = Inspection::new(FormatId::Pdf, 10);
         assert!(Report::new(&ins).headline().contains("reveals nothing"));
+    }
+
+    #[test]
+    fn the_headline_stops_at_three_and_counts_the_rest() {
+        let mut ins = photo();
+        for class in [Class::Time, Class::Correlation, Class::History] {
+            ins.findings.push(Finding::new(class, format!("x:{class}"), "something"));
+        }
+        let h = Report::new(&ins).headline();
+        // Counting commas would not do: one of the class sentences has its own.
+        let named = ALL_CLASSES.iter().filter(|c| h.contains(c.sentence())).count();
+        assert_eq!(named, 3, "{h}");
+        assert!(h.ends_with("There are 3 more kinds of thing in it as well."), "{h}");
+    }
+
+    #[test]
+    fn the_same_fact_in_three_places_is_one_row() {
+        let mut ins = Inspection::new(FormatId::Jpeg, 10);
+        for locator in ["exif:ifd0:0x013b", "iptc:2:80", "xmp:dc:creator"] {
+            ins.findings
+                .push(Finding::new(Class::Identity, locator, "author").value("Marie Dvorakova"));
+        }
+        let report = Report::new(&ins);
+        let rows = report.rows(Class::Identity);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].places, 3);
+        assert_eq!(rows[0].places_note().as_deref(), Some("in 3 places"));
+        // The counts still say four fields, because that is what has to be
+        // removed; it is only the reading that is collapsed.
+        assert_eq!(report.counts.fields, 3);
+    }
+
+    #[test]
+    fn an_inspection_does_not_claim_to_have_removed_nothing() {
+        let c = Counts::of(&photo(), &[]);
+        assert!(c.sentence().ends_with("3 classes."), "{}", c.sentence());
+        assert!(!c.sentence().contains("removed"), "{}", c.sentence());
     }
 
     #[test]
@@ -451,6 +579,45 @@ mod tests {
         assert!(Verification::of(&out, &Profile::uniform()).clean());
         out.findings[0].value = Some("1970:01:01 00:00:00".into());
         assert!(!Verification::of(&out, &Profile::uniform()).clean());
+    }
+
+    #[test]
+    fn a_replaceable_field_is_unresolved_rather_than_failed() {
+        let mut out = Inspection::new(FormatId::Pdf, 10);
+        out.findings.push(
+            Finding::new(Class::Correlation, "pdf:trailer:ID", "the file identifier")
+                .value("abc123")
+                .replaceable(),
+        );
+        let v = Verification::of(&out, &Profile::standard());
+        assert!(v.clean(), "a file that may have been cleaned must not be called dirty");
+        assert_eq!(v.unresolved.len(), 1);
+        assert!(text_verify(&v).contains("Cannot be judged from this file alone"));
+    }
+
+    #[test]
+    fn a_replaceable_field_the_diff_accounts_for_is_resolved() {
+        let mut out = Inspection::new(FormatId::Pdf, 10);
+        out.findings.push(
+            Finding::new(Class::Correlation, "pdf:trailer:ID", "the file identifier")
+                .value("deadbeef")
+                .replaceable(),
+        );
+        let done = vec![Change::rewritten(
+            Class::Correlation,
+            "pdf:trailer:ID",
+            "the file identifier",
+            Action::Replace,
+            Some("abc123".into()),
+            Some("deadbeef".into()),
+        )];
+        let v = Verification::after(&out, &Profile::standard(), &done);
+        assert!(v.clean());
+        assert!(v.unresolved.is_empty());
+
+        // And a diff claiming a replacement that is not in the file fails.
+        out.findings[0].value = Some("abc123".into());
+        assert!(!Verification::after(&out, &Profile::standard(), &done).clean());
     }
 
     #[test]

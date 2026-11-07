@@ -132,19 +132,25 @@ fn keyword_info(keyword: &str) -> (Class, &'static str) {
 }
 
 /// A field removed not because the profile asked but because keeping it would
-/// have left the file in a crowd of almost nobody. The diff has to say so.
+/// have left the file in a crowd of almost nobody.
+///
+/// The diff has to say which it was and why, so the class is the field's own
+/// and the reason is the one that actually applies: a lone date chunk is one
+/// case, a whole EXIF block inside a PNG is another.
 fn blended_away(
+    class: Class,
     locator: impl Into<String>,
     label: impl Into<String>,
     before: Option<String>,
+    reason: &str,
 ) -> Change {
-    let mut c = Change::removed(Class::Time, locator, label, before);
-    c.label = format!(
-        "{} (removed to match common tools: a date here is unusual)",
-        c.label
-    );
+    let mut c = Change::removed(class, locator, label, before);
+    c.label = format!("{} (removed to match common tools: {reason})", c.label);
     c
 }
+
+const WHY_DATE: &str = "a date in a PNG is unusual";
+const WHY_EXIF: &str = "an EXIF block in a PNG is unusual whatever is in it";
 
 fn parse_time(data: &[u8]) -> Option<Civil> {
     if data.len() < 7 {
@@ -287,9 +293,11 @@ impl Handler for Png {
                     let shown = original.map(|t| t.to_iso()).unwrap_or_default();
                     if profile.may_blend_away(FormatId::Png) {
                         changes.push(blended_away(
+                            Class::Time,
                             "png:tIME",
                             "last modification time",
                             Some(shown),
+                            WHY_DATE,
                         ));
                         continue;
                     }
@@ -322,7 +330,7 @@ impl Handler for Png {
                         exif::inspect_entries(&exif, &mut inner);
                     }
                     for f in inner.findings.into_iter().filter(|f| !f.protected) {
-                        changes.push(blended_away(f.locator, f.label, f.value));
+                        changes.push(blended_away(f.class, f.locator, f.label, f.value, WHY_EXIF));
                     }
                 }
                 b"eXIf" => match Exif::parse(&c.data) {
@@ -410,6 +418,22 @@ mod tests {
         assert_eq!(t.value.as_deref(), Some("1980-01-01T00:00:00Z"));
     }
 
+    /// The whole EXIF block goes when a PNG carries one, and each field keeps
+    /// its own class in the diff rather than all of them being filed as dates.
+    #[test]
+    fn a_blended_away_exif_block_reports_each_field_under_its_own_class() {
+        let mut exif = crate::format::exif::Exif { le: true, ..Default::default() };
+        exif.ifd0.push(crate::format::exif::Entry::ascii(0x0131, "GNOME Screenshot 45.1"));
+        exif.exif.push(crate::format::exif::Entry::ascii(0x9003, "2024:06:14 19:42:07"));
+        let data = png_with(vec![Chunk { kind: *b"eXIf", data: exif.to_tiff() }]);
+
+        let out = Png.clean(&data, &Profile::standard()).unwrap();
+        assert!(Png.inspect(&out.data).unwrap().findings.is_empty());
+        let device = out.changes.iter().find(|c| c.class == Class::Device).expect("no device change");
+        assert!(device.label.contains("EXIF block in a PNG is unusual"), "{}", device.label);
+        assert!(out.changes.iter().any(|c| c.class == Class::Time));
+    }
+
     #[test]
     fn the_colour_profile_survives_every_profile() {
         let data = png_with(vec![Chunk { kind: *b"iCCP", data: b"p\0\0junk".to_vec() }]);
@@ -426,7 +450,8 @@ mod tests {
         let out = Png.clean(&data, &Profile::standard()).unwrap();
         let ins = Png.inspect(&out.data).unwrap();
         assert!(ins.in_class(Class::Time).next().is_none());
-        assert!(out.changes[0].label.contains("match common tools"));
+        assert!(out.changes[0].label.contains("a date in a PNG is unusual"));
+        assert_eq!(out.changes[0].class, Class::Time);
     }
 
     #[test]

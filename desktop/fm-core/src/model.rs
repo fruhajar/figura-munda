@@ -164,6 +164,12 @@ pub struct Finding {
     /// Stripping this would be a regression: ICC profiles, tagged-PDF structure,
     /// anything inside a signed PDF. Never altered regardless of profile.
     pub protected: bool,
+    /// Present in essentially every file of this format, so its presence in a
+    /// cleaned file does not prove the original value survived: a tool that
+    /// replaced it leaves a field that looks exactly like one never touched.
+    /// The PDF trailer identifier is the case this exists for. Verify mode
+    /// reports these separately rather than calling them failures.
+    pub replaceable: bool,
     /// Worth reporting but outside what this tool can change, so verify mode
     /// must not hold it against a handler. A file's creation time on the
     /// filesystem is the example: it becomes the time of cleaning no matter
@@ -181,6 +187,7 @@ impl Finding {
             label: label.into(),
             value: None,
             protected: false,
+            replaceable: false,
             advisory: false,
             impact: Impact::Metadata,
             note: None,
@@ -189,6 +196,11 @@ impl Finding {
 
     pub fn advisory(mut self) -> Self {
         self.advisory = true;
+        self
+    }
+
+    pub fn replaceable(mut self) -> Self {
+        self.replaceable = true;
         self
     }
 

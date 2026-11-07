@@ -83,7 +83,8 @@ fn phone_photo_reveals_every_class_the_manifest_declares() {
         .in_class(Class::HiddenPayload)
         .find(|f| f.locator == "exif:ifd1:thumbnail")
         .expect("thumbnail not reported");
-    assert_eq!(thumb.value.as_deref(), Some("5905 bytes of JPEG"));
+    assert_eq!(thumb.value.as_deref(), Some("5905 bytes"));
+    assert_eq!(thumb.impact, fm_core::Impact::Content, "a real preview is content, not metadata");
 
     // The colour profile is found but marked never-remove.
     let icc = ins

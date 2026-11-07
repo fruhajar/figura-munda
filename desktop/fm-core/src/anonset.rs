@@ -165,6 +165,16 @@ pub const SIGNATURES: &[Signature] = &[
         note: "almost every PDF in circulation names a producer and nothing else; an empty Info dict is rarer than a generic one",
     },
     Signature {
+        id: "pdf-dates-only",
+        name: "a PDF keeping only its dates",
+        format: FormatId::Pdf,
+        requires: &["pdf:creation-date"],
+        forbids: &["pdf:author", "pdf:producer", "pdf:xmp", "pdf:embedded-files", "pdf:openaction-js", "pdf:incremental"],
+        crowd: Crowd::Medium,
+        provenance: Provenance::Structural,
+        note: "dated but with no producer named is an unusual combination; a profile that replaces the producer with a generic string instead of removing it reaches a larger crowd, at the cost of writing a string that is not strictly true",
+    },
+    Signature {
         id: "pdf-no-info",
         name: "a PDF with no document information at all",
         format: FormatId::Pdf,

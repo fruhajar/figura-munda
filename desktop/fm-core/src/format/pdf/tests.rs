@@ -131,16 +131,22 @@ fn standard_strips_the_information_dictionary() {
 
 /// The replaced identifier is the one case where a field in a class the profile
 /// said to remove is supposed to still be present, so it is also the case that
-/// shows why verification needs the diff and not only the finished file.
+/// shows what verification can and cannot settle on its own.
 #[test]
-fn a_replaced_identifier_verifies_only_against_the_diff() {
+fn a_replaced_identifier_is_resolved_by_the_diff_and_unresolved_without_it() {
     let cleaned = Pdf.clean(&plain(), &Profile::standard()).unwrap();
     let after = Pdf.inspect(&cleaned.data).unwrap();
-    assert!(Verification::after(&after, &Profile::standard(), &cleaned.changes).clean());
-    assert!(
-        !Verification::of(&after, &Profile::standard()).clean(),
-        "without the diff there is no way to tell a rewritten identifier from an untouched one"
-    );
+
+    let with_diff = Verification::after(&after, &Profile::standard(), &cleaned.changes);
+    assert!(with_diff.clean());
+    assert!(with_diff.unresolved.is_empty());
+
+    // Checking the finished file on its own cannot settle it either way, so it
+    // is reported as unsettled rather than as a failure.
+    let alone = Verification::of(&after, &Profile::standard());
+    assert!(alone.clean(), "a file that may well be clean must not be called dirty");
+    assert_eq!(alone.unresolved.len(), 1);
+    assert_eq!(alone.unresolved[0].locator, "pdf:trailer:ID");
 }
 
 #[test]

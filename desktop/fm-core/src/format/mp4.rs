@@ -293,11 +293,19 @@ impl Handler for Mp4 {
                     .collect();
                 let all_doomed = !named.is_empty()
                     && named.iter().all(|c| {
-                        leaf_info(&c.kind).is_some_and(|(class, _)| profile.alters(class))
+                        blend_leaf(&c.kind, profile)
+                            || leaf_info(&c.kind).is_some_and(|(class, _)| profile.alters(class))
                     });
                 if all_doomed {
                     for c in named {
                         let (class, label) = leaf_info(&c.kind).unwrap();
+                        // A field the profile would have kept still has to say
+                        // why it went, even when its whole container went too.
+                        let label = if blend_leaf(&c.kind, profile) && !profile.alters(class) {
+                            format!("{label} (removed to match common tools: {WHY_UDTA_DATE})")
+                        } else {
+                            label.to_string()
+                        };
                         changes.push(Change::removed(
                             class,
                             format!("mp4:{}", c.name()),
@@ -310,6 +318,18 @@ impl Handler for Mp4 {
                 }
             }
             if let Some((class, label)) = leaf_info(&b.kind) {
+                if blend_leaf(&b.kind, profile) && !inside_any(&doomed, b.at) {
+                    changes.push(Change::rewritten(
+                        class,
+                        format!("mp4:{}", b.name()),
+                        format!("{label} (removed to match common tools: {WHY_UDTA_DATE})"),
+                        Action::Remove,
+                        leaf_text(data, b),
+                        None,
+                    ));
+                    doomed.push((b.at, b.end()));
+                    continue;
+                }
                 if profile.alters(class) && !inside_any(&doomed, b.at) {
                     changes.push(Change::removed(
                         class,
@@ -369,6 +389,15 @@ impl Handler for Mp4 {
 
         Ok(Outcome { data: out, changes })
     }
+}
+
+const WHY_UDTA_DATE: &str = "a date in a user-data box is written by handsets, not by encoders";
+
+/// A date in `udta` goes even where the profile keeps the time class, because
+/// its presence rather than its value is what identifies the recorder. The
+/// header times, which every file has, are left to the profile.
+fn blend_leaf(kind: &[u8; 4], profile: &Profile) -> bool {
+    matches!(kind, b"\xa9dat" | b"date") && profile.may_blend(false)
 }
 
 fn inside_any(ranges: &[(usize, usize)], at: usize) -> bool {
@@ -590,6 +619,31 @@ mod tests {
         assert_eq!(last.end(), out.data.len(), "the box tree does not cover the file");
         assert!(tree.find(&[b"moov", b"mvhd"]).is_some(), "mvhd was lost");
         assert!(tree.find(&[b"moov", b"udta"]).is_none(), "udta survived");
+    }
+
+    /// Every MP4 has a recording time in its header, so that one follows the
+    /// profile. Almost none has one in a user-data box, so that one goes even
+    /// when the profile keeps the time class.
+    #[test]
+    fn a_handsets_user_data_date_goes_but_the_header_time_stays() {
+        let mut udta = udta_leaf(b"\xa9dat", "2024-06-14T19:42:07Z");
+        udta.extend_from_slice(&udta_leaf(b"\xa9nam", "clip"));
+        let mut moov_body = mvhd(Civil { year: 2024, month: 6, day: 14, hour: 19, minute: 42, second: 7 });
+        moov_body.extend_from_slice(&box_bytes(b"udta", &udta));
+        let mut data = box_bytes(b"ftyp", b"isom\0\0\x02\0isomiso2");
+        data.extend_from_slice(&box_bytes(b"moov", &moov_body));
+
+        let out = Mp4.clean(&data, &Profile::standard()).unwrap();
+        let after = Mp4.inspect(&out.data).unwrap();
+        assert!(!after.shape.contains(&"mp4:udta".to_string()), "{:?}", after.shape);
+        assert!(after.shape.contains(&"mp4:header-time".to_string()));
+        assert!(out.changes.iter().any(|c| c.label.contains("written by handsets")));
+
+        // And with blending off, the kept date stays where it was.
+        let mut minimal = Profile::standard();
+        minimal.blending = crate::profile::Blending::Minimal;
+        let out = Mp4.clean(&data, &minimal).unwrap();
+        assert!(Mp4.inspect(&out.data).unwrap().shape.contains(&"mp4:udta".to_string()));
     }
 
     #[test]

@@ -221,12 +221,21 @@ impl Profile {
     }
 
     /// Whether a handler may drop a field the profile would keep, because
-    /// keeping it would make the file conspicuous. Never true for an inert
-    /// profile: an inspection run changes nothing, including for this reason.
+    /// keeping it would make the file conspicuous.
+    ///
+    /// `expected` says whether a value of this kind is normal *in this place*,
+    /// which is finer than per-format and has to be: every MP4 has a recording
+    /// time in its `mvhd` header, and almost none has one in a `udta` box, so
+    /// the same date is ordinary in one place and a handset's signature in the
+    /// other. Never true for an inert profile: an inspection run changes
+    /// nothing, including for this reason.
+    pub fn may_blend(&self, expected: bool) -> bool {
+        self.blending == Blending::MatchCommon && !self.inert() && !expected
+    }
+
+    /// The per-format answer, for formats where a date is unusual anywhere.
     pub fn may_blend_away(&self, format: crate::model::FormatId) -> bool {
-        self.blending == Blending::MatchCommon
-            && !self.inert()
-            && !crate::anonset::time_is_expected(format)
+        self.may_blend(crate::anonset::time_is_expected(format))
     }
 
     pub fn validate(&self) -> Result<(), ProfileError> {
@@ -365,6 +374,10 @@ mod tests {
         let mut minimal = Profile::standard();
         minimal.blending = Blending::Minimal;
         assert!(!minimal.may_blend_away(crate::model::FormatId::Png));
+        // Place, not only format: an MP4 date is expected in a header and not
+        // in a user-data box.
+        assert!(p.may_blend(false));
+        assert!(!p.may_blend(true));
     }
 
     #[test]

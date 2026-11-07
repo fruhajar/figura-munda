@@ -25,6 +25,10 @@ pub const TAG_GPS_IFD: u16 = 0x8825;
 pub const TAG_INTEROP_IFD: u16 = 0xA005;
 pub const TAG_XMP: u16 = 0x02BC;
 pub const TAG_IPTC: u16 = 0x83BB;
+/// Smallest byte count a thumbnail could plausibly hold a picture in. Below
+/// this it is a placeholder, whatever its header says.
+const THUMBNAIL_FLOOR: usize = 256;
+
 pub const TAG_THUMB_OFFSET: u16 = 0x0201;
 pub const TAG_THUMB_LENGTH: u16 = 0x0202;
 
@@ -507,19 +511,41 @@ pub const RENDER_TAGS: &[u16] = &[
 
 pub fn tag_info(space: Space, tag: u16) -> Option<TagInfo> {
     let info = |class: Class, label: &'static str| Some(TagInfo { class, label, protected: false });
+    if space == Space::Gps && tag == 0x0000 {
+        // Present in files that never had a fix, so it says something about the
+        // writer rather than about a place. Calling it location would make a
+        // report claim a position the file does not contain.
+        return Some(TagInfo {
+            class: Class::Device,
+            label: "GPS tag version, which is written even when no position was recorded",
+            protected: false,
+        });
+    }
     if space == Space::Gps {
         // Every GPS tag is location, including the ones that only describe the
-        // fix, so the mapping is by IFD rather than by tag.
+        // fix, so the mapping is by IFD rather than by tag. The reference tags
+        // are named for what they are: on their own a bare "N" is not a
+        // coordinate, and labelling it "GPS latitude" would read as a duplicate
+        // of the coordinate it belongs to.
         return Some(TagInfo {
             class: Class::Location,
             label: match tag {
-                0x0001 | 0x0002 => "GPS latitude",
-                0x0003 | 0x0004 => "GPS longitude",
-                0x0005 | 0x0006 => "GPS altitude",
-                0x0007 => "GPS time of the fix",
-                0x001D => "GPS date of the fix",
+                0x0001 => "hemisphere for the latitude",
+                0x0002 => "GPS latitude",
+                0x0003 => "hemisphere for the longitude",
+                0x0004 => "GPS longitude",
+                0x0005 => "whether the altitude is above or below sea level",
+                0x0006 => "GPS altitude",
+                0x0007 => "time of the GPS fix",
+                0x0008 => "GPS satellites used",
+                0x0009 => "GPS receiver status",
+                0x000A => "GPS measurement mode",
+                0x000B => "GPS accuracy",
+                0x000C | 0x000D => "speed over ground",
+                0x000E | 0x000F => "direction of travel",
                 0x0010 | 0x0011 => "direction the camera was pointing",
                 0x0012 => "map datum",
+                0x001D => "date of the GPS fix",
                 _ => "GPS data",
             },
             protected: false,
@@ -582,6 +608,25 @@ pub fn tag_info(space: Space, tag: u16) -> Option<TagInfo> {
     }
 }
 
+/// How one entry should read in a report.
+pub fn display_for(exif: &Exif, space: Space, e: &Entry) -> String {
+    match (space, e.tag) {
+        (Space::Gps, 0x0002 | 0x0004) => e.display_dms(exif.le, gps_ref(exif, e.tag).as_deref()),
+        (Space::Gps, 0x0007) if e.count >= 3 => {
+            let parts: Vec<String> = e.display(exif.le).split(", ").map(|s| s.to_string()).collect();
+            if parts.len() >= 3 {
+                format!(
+                    "{:0>2}:{:0>2}:{:0>2} UTC",
+                    parts[0], parts[1], parts[2]
+                )
+            } else {
+                e.display(exif.le)
+            }
+        }
+        _ => e.display(exif.le),
+    }
+}
+
 /// The reference letter that goes with a GPS coordinate, for display.
 pub fn gps_ref(exif: &Exif, tag: u16) -> Option<String> {
     let r = match tag {
@@ -637,11 +682,7 @@ pub fn inspect_entries(exif: &Exif, ins: &mut Inspection) {
     for space in [Space::Ifd0, Space::Exif, Space::Gps, Space::Interop] {
         for e in exif.space(space) {
             let Some(info) = tag_info(space, e.tag) else { continue };
-            let value = if space == Space::Gps && matches!(e.tag, 0x0002 | 0x0004) {
-                e.display_dms(exif.le, gps_ref(exif, e.tag).as_deref())
-            } else {
-                e.display(exif.le)
-            };
+            let value = display_for(exif, space, e);
             let mut f = Finding::new(
                 info.class,
                 format!("exif:{}:{:#06x}", space.label(), e.tag),
@@ -658,15 +699,25 @@ pub fn inspect_entries(exif: &Exif, ins: &mut Inspection) {
         }
     }
     if let Some(t) = &exif.thumbnail {
-        ins.findings.push(
-            Finding::new(Class::HiddenPayload, "exif:ifd1:thumbnail", "embedded preview image")
-                .value(format!("{} bytes of JPEG", t.len()))
-                .impact(Impact::Content)
-                .note(
-                    "A preview is stored separately from the picture and is not updated when the \
-                     picture is cropped or edited, so it can still show what was removed.",
-                ),
-        );
+        // Scale the language to the payload. A preview big enough to hold a
+        // picture is the serious finding, because it is not regenerated when the
+        // picture is cropped. A four-byte stub is just a field to remove, and
+        // calling it a recoverable original would be alarming and wrong.
+        let real = t.starts_with(&[0xFF, 0xD8]) && t.len() >= THUMBNAIL_FLOOR;
+        let mut f = Finding::new(
+            Class::HiddenPayload,
+            "exif:ifd1:thumbnail",
+            if real { "embedded preview image" } else { "an empty preview entry" },
+        )
+        .value(format!("{} bytes", t.len()))
+        .impact(if real { Impact::Content } else { Impact::Metadata });
+        if real {
+            f = f.note(
+                "A preview is stored separately from the picture and is not updated when the \
+                 picture is cropped or edited, so it can still show what was removed.",
+            );
+        }
+        ins.findings.push(f);
     }
 }
 
@@ -711,11 +762,7 @@ pub fn clean_entries(exif: &Exif, profile: &Profile, changes: &mut Vec<Change>) 
             let info = tag_info(space, e.tag);
             let label = info.as_ref().map_or("unrecognised field", |i| i.label).to_string();
             let class = info.as_ref().map_or(Class::Device, |i| i.class);
-            let shown = if space == Space::Gps && matches!(e.tag, 0x0002 | 0x0004) {
-                e.display_dms(exif.le, gps_ref(exif, e.tag).as_deref())
-            } else {
-                e.display(exif.le)
-            };
+            let shown = display_for(exif, space, e);
             let mut keep = |entry: Entry| match space {
                 Space::Ifd0 => out.ifd0.push(entry),
                 Space::Exif => out.exif.push(entry),
@@ -750,11 +797,13 @@ pub fn clean_entries(exif: &Exif, profile: &Profile, changes: &mut Vec<Change>) 
     }
     if exif.thumbnail.is_some() {
         if profile.alters(Class::HiddenPayload) {
+            let t = exif.thumbnail.as_ref();
+            let real = t.is_some_and(|t| t.starts_with(&[0xFF, 0xD8]) && t.len() >= THUMBNAIL_FLOOR);
             changes.push(Change::removed(
                 Class::HiddenPayload,
                 "exif:ifd1:thumbnail",
-                "embedded preview image",
-                exif.thumbnail.as_ref().map(|t| format!("{} bytes of JPEG", t.len())),
+                if real { "embedded preview image" } else { "an empty preview entry" },
+                t.map(|t| format!("{} bytes", t.len())),
             ));
         } else {
             out.thumbnail = exif.thumbnail.clone();

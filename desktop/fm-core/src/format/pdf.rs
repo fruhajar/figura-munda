@@ -218,6 +218,7 @@ impl Handler for Pdf {
                         "the file identifier, which is the same in every copy and every revision",
                     )
                     .value(shown.join(" / "))
+                    .replaceable()
                     .note(
                         "Two documents sharing the first half of this pair came from the same \
                          original, whatever their names and contents say.",
