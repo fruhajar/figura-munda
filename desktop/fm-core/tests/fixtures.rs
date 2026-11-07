@@ -231,3 +231,126 @@ fn every_profile_leaves_every_fixture_verifiably_clean() {
         }
     }
 }
+
+#[test]
+fn the_drawing_reveals_its_editor_its_filename_and_the_plan_parked_off_canvas() {
+    let (path, data) = fixture_or_skip!("diagram.svg");
+    let ins = inspect_bytes(&data, ext(&path).as_deref()).unwrap();
+    assert_eq!(ins.format, FormatId::Svg);
+
+    assert!(values(&ins, Class::Identity).join(" ").contains("Marie Dvorakova"));
+    assert!(values(&ins, Class::Device).join(" ").contains("1.3.2"));
+    let correlation = values(&ins, Class::Correlation).join(" ");
+    assert!(correlation.contains("org-chart-INTERNAL-v4.svg"), "{correlation}");
+    assert!(ins.shape.contains(&"svg:offcanvas".to_string()), "{:?}", ins.shape);
+}
+
+#[test]
+fn cleaning_the_drawing_takes_the_off_canvas_text_with_it() {
+    let (path, data) = fixture_or_skip!("diagram.svg");
+    let cleaned = clean_bytes(&data, ext(&path).as_deref(), &Profile::standard()).unwrap();
+    assert!(cleaned.verification.clean(), "{:?}", cleaned.verification.leftovers);
+
+    let text = String::from_utf8(cleaned.data.clone()).unwrap();
+    assert!(!text.contains("-18 FTE"), "the superseded plan survived:\n{text}");
+    assert!(!text.contains("Marie Dvorakova"), "{text}");
+    assert!(!text.contains("org-chart-INTERNAL"), "{text}");
+    // Still a drawing: the visible content and the viewBox are untouched.
+    assert!(text.contains("viewBox"), "{text}");
+
+    // Removing visible content is the kind of change that has to be confirmed,
+    // so it must be flagged before anything is written.
+    let destructive = fm_core::report::destructive(&cleaned.before, &Profile::standard());
+    assert!(destructive.iter().any(|f| f.locator.starts_with("svg:offcanvas")));
+}
+
+#[test]
+fn the_letter_reveals_two_authors_a_company_and_a_superseded_figure() {
+    let (path, data) = fixture_or_skip!("letter.docx");
+    let ins = inspect_bytes(&data, ext(&path).as_deref()).unwrap();
+    assert_eq!(ins.format, FormatId::Ooxml);
+
+    let identity = values(&ins, Class::Identity).join(" | ");
+    assert!(identity.contains("Marie Dvorakova"), "{identity}");
+    assert!(identity.contains("Petr Novak"), "{identity}");
+    assert!(identity.contains("Severin Holding a.s."), "{identity}");
+    assert!(identity.contains("Jan Prochazka"), "{identity}");
+    assert!(identity.contains("sev-internal-memo.dotx"), "{identity}");
+
+    // The save identifiers, which the manifest declares six of.
+    let correlation = values(&ins, Class::Correlation).join(" | ");
+    assert!(correlation.contains("3F2A9C41"), "the document GUID is missing: {correlation}");
+    assert!(ins.in_class(Class::Correlation).any(|f| f.locator.contains("rsid")), "{correlation}");
+
+    // Tracked changes, and the names inside them.
+    let tracked = ins
+        .in_class(Class::History)
+        .find(|f| f.locator.contains("tracked"))
+        .expect("tracked changes not found");
+    assert!(tracked.note.as_deref().unwrap_or_default().contains("Novak"));
+
+    // The editing-time total and the thumbnail.
+    assert!(values(&ins, Class::Time).join(" ").contains("2471"));
+    assert!(ins.in_class(Class::HiddenPayload).any(|f| f.locator.contains("thumbnail")));
+
+    // The container's own stamps, which the manifest pins to 2019-03-14.
+    let structural = values(&ins, Class::StructuralFingerprint).join(" | ");
+    assert!(structural.contains("2019-03-14"), "{structural}");
+}
+
+#[test]
+fn cleaning_the_letter_leaves_a_document_that_still_opens() {
+    let (path, data) = fixture_or_skip!("letter.docx");
+    for profile in Profile::builtins() {
+        if profile.inert() {
+            continue;
+        }
+        let cleaned = clean_bytes(&data, ext(&path).as_deref(), &profile).unwrap();
+        assert!(
+            cleaned.verification.clean(),
+            "{}: {:?}",
+            profile.name,
+            cleaned.verification.leftovers.iter().map(|f| &f.locator).collect::<Vec<_>>()
+        );
+
+        let text = String::from_utf8_lossy(&cleaned.data).to_string();
+        assert!(!text.contains("Marie Dvorakova"), "{} leaked a name", profile.name);
+
+        // The parts a reader needs are all still there.
+        let names: Vec<String> = fm_core::format::zip::read(&cleaned.data)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.name)
+            .collect();
+        assert!(names.contains(&"[Content_Types].xml".to_string()), "{names:?}");
+        assert!(names.contains(&"word/document.xml".to_string()), "{names:?}");
+        assert!(!names.iter().any(|n| n.contains("thumbnail")), "{names:?}");
+        assert!(!names.iter().any(|n| n == "word/comments.xml"), "{names:?}");
+    }
+}
+
+/// Resolving the history means accepting what was inserted and discarding what
+/// was deleted. The alternative, keeping the markup and stripping the author
+/// names, would leave the deleted sentence sitting in the file.
+#[test]
+fn cleaning_the_letter_accepts_the_insertion_and_discards_the_deletion() {
+    let (path, data) = fixture_or_skip!("letter.docx");
+    let cleaned = clean_bytes(&data, ext(&path).as_deref(), &Profile::standard()).unwrap();
+    let document = fm_core::format::zip::read(&cleaned.data)
+        .unwrap()
+        .into_iter()
+        .find(|m| m.name == "word/document.xml")
+        .expect("document.xml missing");
+    let xml = String::from_utf8_lossy(&document.data).to_string();
+
+    assert!(!xml.contains("Previous cap"), "the deleted sentence survived: {xml}");
+    assert!(!xml.contains("400,000"), "the superseded figure survived: {xml}");
+    assert!(
+        xml.contains("Settlement authority raised to CZK 1,950,000."),
+        "the accepted text was lost: {xml}"
+    );
+    assert!(!xml.contains("w:del"), "deletion markup survived: {xml}");
+    assert!(!xml.contains("w:ins"), "insertion markup survived: {xml}");
+    assert!(!xml.contains("rsid"), "{xml}");
+    assert!(!xml.contains("commentReference"), "{xml}");
+}

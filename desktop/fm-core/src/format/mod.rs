@@ -11,8 +11,12 @@ use serde::{Deserialize, Serialize};
 pub mod exif;
 pub mod iptc;
 pub mod jpeg;
+pub mod ooxml;
 pub mod png;
+pub mod svg;
+pub mod xmlfilter;
 pub mod xmp;
+pub mod zip;
 
 /// One field-level edit, as it will appear in the before/after diff.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -74,6 +78,10 @@ pub fn handlers() -> &'static [&'static dyn Handler] {
     &[
         &jpeg::Jpeg,
         &png::Png,
+        &ooxml::Ooxml,
+        // SVG last: it is the only text format, so it must not shadow a
+        // container that happens to contain the string "<svg".
+        &svg::Svg,
     ]
 }
 
