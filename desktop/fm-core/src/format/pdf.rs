@@ -142,6 +142,151 @@ fn is_javascript(doc: &Document, object: &Object) -> bool {
     matches!(dict.get(b"S").and_then(|o| o.as_name()), Ok(b"JavaScript")) || dict.get(b"JS").is_ok()
 }
 
+/// Whether this action, or any action in an event dictionary, runs script.
+///
+/// An annotation's `/AA` is a dictionary of event to action, so the script is
+/// one level further down than it is under `/OpenAction`.
+fn runs_script(doc: &Document, object: &Object, depth: usize) -> bool {
+    if is_javascript(doc, object) {
+        return true;
+    }
+    if depth >= 3 {
+        return false;
+    }
+    let dict = match object {
+        Object::Dictionary(d) => d.clone(),
+        Object::Reference(id) => match doc.get_object(*id) {
+            Ok(Object::Dictionary(d)) => d.clone(),
+            _ => return false,
+        },
+        _ => return false,
+    };
+    dict.iter().any(|(_, v)| runs_script(doc, v, depth + 1))
+}
+
+/// Something a page carries besides its content: a file attached to an
+/// annotation, embedded media, or an action that runs when the page or the
+/// annotation is touched.
+///
+/// The catalog name tree is only the tidy way to attach a file. An annotation
+/// carries one just as well, and a page's own `/AA` runs script without the
+/// catalog's help, so looking at the catalog alone reported a clean document
+/// with both still in it.
+struct PagePayload {
+    page_id: ObjectId,
+    /// The annotation this is on, or `None` for the page itself.
+    annot: Option<ObjectId>,
+    /// Whether the annotation goes whole, or only its action keys.
+    whole: bool,
+    locator: String,
+    label: &'static str,
+    value: Option<String>,
+}
+
+fn page_payloads(doc: &Document) -> Vec<PagePayload> {
+    let mut out = Vec::new();
+    for (number, page_id) in doc.get_pages() {
+        let Ok(Object::Dictionary(page)) = doc.get_object(page_id) else { continue };
+        if page.get(b"AA").is_ok() {
+            out.push(PagePayload {
+                page_id,
+                annot: None,
+                whole: false,
+                locator: format!("pdf:page:{number}:AA"),
+                label: "an action that runs when the page is opened or closed",
+                value: None,
+            });
+        }
+        let annots = match page.get(b"Annots") {
+            Ok(Object::Array(a)) => a.clone(),
+            Ok(Object::Reference(id)) => match doc.get_object(*id) {
+                Ok(Object::Array(a)) => a.clone(),
+                _ => continue,
+            },
+            _ => continue,
+        };
+        for entry in annots {
+            let Object::Reference(annot_id) = entry else { continue };
+            let Ok(Object::Dictionary(annot)) = doc.get_object(annot_id) else { continue };
+            let subtype = annot.get(b"Subtype").and_then(|o| o.as_name()).unwrap_or(b"");
+            let (whole, label): (bool, &'static str) = match subtype {
+                b"FileAttachment" => (true, "a file attached to a page, with metadata of its own"),
+                b"Screen" | b"RichMedia" | b"Movie" | b"Sound" => {
+                    (true, "media embedded in a page, which carries its own metadata")
+                }
+                _ => {
+                    let scripted = [b"A".as_slice(), b"AA".as_slice()]
+                        .iter()
+                        .any(|k| annot.get(k).is_ok_and(|o| runs_script(doc, o, 0)));
+                    if !scripted {
+                        continue;
+                    }
+                    (false, "script that runs when an annotation is used")
+                }
+            };
+            let named = annot
+                .get(b"FS")
+                .ok()
+                .and_then(|fs| match fs {
+                    Object::Reference(id) => doc.get_object(*id).ok(),
+                    other => Some(other),
+                })
+                .and_then(|fs| match fs {
+                    Object::Dictionary(d) => d.get(b"F").ok().or_else(|| d.get(b"UF").ok()),
+                    _ => None,
+                })
+                .and_then(|f| f.as_str().ok())
+                .map(|f| String::from_utf8_lossy(f).to_string());
+            out.push(PagePayload {
+                page_id,
+                annot: Some(annot_id),
+                whole,
+                locator: format!(
+                    "pdf:page:{number}:annot:{}",
+                    String::from_utf8_lossy(subtype)
+                ),
+                label,
+                value: named.or_else(|| Some(format!("page {number}"))),
+            });
+        }
+    }
+    out
+}
+
+/// Drop these annotations from wherever the page's `/Annots` lives, which may
+/// be an array in the page or an object of its own.
+fn drop_annots(doc: &mut Document, page_id: ObjectId, doomed: &[ObjectId]) {
+    let indirect = match doc.get_object(page_id) {
+        Ok(Object::Dictionary(page)) => match page.get(b"Annots") {
+            Ok(Object::Reference(id)) => Some(*id),
+            _ => None,
+        },
+        _ => return,
+    };
+    let mut empty = false;
+    if let Some(id) = indirect {
+        if let Ok(Object::Array(a)) = doc.get_object_mut(id) {
+            a.retain(|o| !matches!(o, Object::Reference(r) if doomed.contains(r)));
+            empty = a.is_empty();
+        }
+    } else if let Ok(Object::Dictionary(page)) = doc.get_object_mut(page_id) {
+        if let Ok(Object::Array(a)) = page.get_mut(b"Annots") {
+            a.retain(|o| !matches!(o, Object::Reference(r) if doomed.contains(r)));
+            empty = a.is_empty();
+        }
+    }
+    // A page that has nothing left to annotate says so, rather than keeping an
+    // empty array no original would have had.
+    if empty {
+        if let Ok(Object::Dictionary(page)) = doc.get_object_mut(page_id) {
+            page.remove(b"Annots");
+        }
+    }
+    for id in doomed {
+        doc.objects.remove(id);
+    }
+}
+
 fn info_dict(doc: &Document) -> Option<(ObjectId, Dictionary)> {
     let id = doc.trailer.get(b"Info").ok()?.as_reference().ok()?;
     match doc.get_object(id) {
@@ -280,6 +425,17 @@ impl Handler for Pdf {
                     );
                 }
             }
+            if catalog.get(b"AA").is_ok() {
+                ins.mark("pdf:openaction-js");
+                ins.findings.push(
+                    Finding::new(
+                        Class::HiddenPayload,
+                        "pdf:catalog:AA",
+                        "an action that runs on a document-wide event",
+                    )
+                    .impact(Impact::Content),
+                );
+            }
             if catalog.get(b"Linearized").is_ok() {
                 ins.mark("pdf:linearized");
             }
@@ -294,6 +450,15 @@ impl Handler for Pdf {
                     .note("kept on purpose: removing it makes the document unreadable to a screen reader"),
                 );
             }
+        }
+
+        for p in page_payloads(&doc) {
+            ins.mark(if p.annot.is_some() { "pdf:page-payload" } else { "pdf:openaction-js" });
+            let mut f = Finding::new(Class::HiddenPayload, p.locator, p.label).impact(Impact::Content);
+            if let Some(value) = p.value {
+                f = f.value(value);
+            }
+            ins.findings.push(f);
         }
 
         // How the file is put together, which identifies the writer even with
@@ -505,6 +670,37 @@ impl Handler for Pdf {
                     found.map(|f| f.label.clone()).unwrap_or_else(|| "embedded payload".into()),
                     found.and_then(|f| f.value.clone()),
                 ));
+            }
+
+            // What the pages carry. An annotation holding a file or media goes
+            // whole; one that only runs script keeps its mark on the page and
+            // loses the script.
+            let payloads = page_payloads(&doc);
+            let mut doomed: std::collections::BTreeMap<ObjectId, Vec<ObjectId>> = Default::default();
+            for p in &payloads {
+                changes.push(Change::removed(
+                    Class::HiddenPayload,
+                    p.locator.clone(),
+                    p.label,
+                    p.value.clone(),
+                ));
+                match p.annot {
+                    Some(annot) if p.whole => doomed.entry(p.page_id).or_default().push(annot),
+                    Some(annot) => {
+                        if let Ok(Object::Dictionary(d)) = doc.get_object_mut(annot) {
+                            d.remove(b"A");
+                            d.remove(b"AA");
+                        }
+                    }
+                    None => {
+                        if let Ok(Object::Dictionary(page)) = doc.get_object_mut(p.page_id) {
+                            page.remove(b"AA");
+                        }
+                    }
+                }
+            }
+            for (page_id, annots) in doomed {
+                drop_annots(&mut doc, page_id, &annots);
             }
         }
 

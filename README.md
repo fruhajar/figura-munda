@@ -219,7 +219,7 @@ those words rather than quietly leaving them out.
 | **PNG** | Done. `tEXt`, `zTXt`, `iTXt` including XMP, `tIME`, `eXIf`, with `iCCP` and the colour chunks untouched. |
 | **SVG** | Done. The metadata block, the editor namespaces, markup comments, scripts, and content parked outside the `viewBox`, judged by what an element covers rather than where its anchor sits, so a bleed background is artwork and not a payload. |
 | **OOXML** | Done for DOCX. Core and app properties, custom properties, the thumbnail, comments, the people list, tracked changes, `rsid` save identifiers, the document GUID, and the container's own member order and timestamps. XLSX and PPTX share the engine; their format-specific parts (hidden sheets, speaker notes) are reported, not removed. |
-| **PDF** | Done. Info dictionary, XMP, the trailer `/ID`, attachments, JavaScript, incremental-update history, the redaction check, and signature detection. |
+| **PDF** | Done. Info dictionary, XMP, the trailer `/ID`, attachments and JavaScript wherever they hang, the catalog name tree and a page's own annotations and actions alike, incremental-update history, the redaction check, and signature detection. |
 | **MP4 / MOV** | Done. `udta` and `ilst`, including the `keys`-indexed `ilst` a recent iPhone writes, the 3GPP `loci` box, the `©xyz` position a handset writes, and the header timestamps, with the sample tables corrected for what was removed. A copy whose boxes do not account for every byte is refused rather than part-read. |
 | **ODF** | Not yet, and refused by name rather than part-read. The ZIP and XML layers are in place and shared; the part names and the metadata vocabulary are not, and reading an ODF package with the OOXML part names finds no properties at all, which in a report is indistinguishable from a document that has none. `report.odt` is a fixture of exactly that, declaring the fields the engine does not read. |
 | **HEIC, TIFF** | Not yet. The EXIF reader and writer are shared, so TIFF is mostly container work; HEIC needs the ISOBMFF item structure, which the MP4 box walker is a start on. |
@@ -421,7 +421,7 @@ cleaning engine, the redaction checks and the runner never will be.
 
 ## Where it stands
 
-**Tested, and the tests say what they test.** 228 of them. The engine is checked
+**Tested, and the tests say what they test.** 231 of them. The engine is checked
 against `fixtures/manifest.json`, which declares field by field what each
 generated fixture contains, so the manifest is the contract between the Python
 generator and the Rust engine and neither can quietly agree with itself. The

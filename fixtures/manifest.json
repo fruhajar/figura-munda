@@ -234,7 +234,9 @@
         ],
         "hidden_payload": [
           "/OpenAction JavaScript",
-          "/EmbeddedFiles notes.txt"
+          "/EmbeddedFiles notes.txt",
+          "page /Annots FileAttachment payroll-draft.csv, which the catalog name tree does not mention",
+          "page /AA /O JavaScript, which runs on page open"
         ],
         "identity": [
           "/Author=Marie Dvorakova",
@@ -250,7 +252,7 @@
       },
       "observed": {
         "hidden_text": "Claimant bank account CZ65 0800 0000 1920 0014 5399",
-        "total_bytes": 2367
+        "total_bytes": 2872
       }
     },
     "report.odt": {

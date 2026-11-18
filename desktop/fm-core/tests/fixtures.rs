@@ -404,7 +404,48 @@ fn the_redacted_report_still_holds_the_account_number() {
     assert!(values(&ins, Class::Identity).join(" ").contains("Marie Dvorakova"));
     assert!(values(&ins, Class::Device).join(" ").contains("Acrobat Distiller 23.0"));
     assert!(values(&ins, Class::Correlation).join(" ").contains("9f2c41a055b14e7c9b306d1e2a77c004"));
-    assert_eq!(ins.in_class(Class::HiddenPayload).count(), 2, "attachment and JavaScript");
+    // Two in the catalog name tree, two reachable only through the page: an
+    // annotation holding a file, and the page's own open action.
+    let payloads: Vec<&str> =
+        ins.in_class(Class::HiddenPayload).map(|f| f.locator.as_str()).collect();
+    assert_eq!(
+        payloads,
+        vec![
+            "pdf:names:EmbeddedFiles",
+            "pdf:catalog:OpenAction",
+            "pdf:page:1:AA",
+            "pdf:page:1:annot:FileAttachment",
+        ],
+        "{payloads:?}"
+    );
+    assert!(values(&ins, Class::HiddenPayload).join(" ").contains("payroll-draft.csv"));
+}
+
+/// Unlinking an attachment leaves its bytes in the file, so the test is for
+/// the bytes, not the pointer. `fixtures/checkpdf.py` separately asserts the
+/// result is still a structurally sound PDF after the surgery.
+#[test]
+fn cleaning_the_report_removes_the_payloads_the_page_carried() {
+    let (path, data) = fixture_or_skip!("report-redacted.pdf");
+    let cleaned = clean_bytes(&data, ext(&path).as_deref(), &Profile::standard()).unwrap();
+    assert!(cleaned.verification.clean(), "{:?}", cleaned.verification.leftovers);
+
+    for gone in [
+        &b"payroll-draft.csv"[..],
+        &b"Jan Prochazka,184000"[..],
+        &b"mailDoc"[..],
+        &b"FileAttachment"[..],
+        &b"settle below 400k"[..],
+    ] {
+        assert!(
+            !cleaned.data.windows(gone.len()).any(|w| w == gone),
+            "{} survived the clean",
+            String::from_utf8_lossy(gone)
+        );
+    }
+    let changed: Vec<&str> = cleaned.changes.iter().map(|c| c.locator.as_str()).collect();
+    assert!(changed.contains(&"pdf:page:1:annot:FileAttachment"), "{changed:?}");
+    assert!(changed.contains(&"pdf:page:1:AA"), "{changed:?}");
 }
 
 #[test]

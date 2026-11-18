@@ -66,6 +66,108 @@ fn plain() -> Vec<u8> {
     build(REDACTED, Dictionary::new(), standard_info())
 }
 
+/// A one-page PDF whose payloads hang off the page instead of the catalog: a
+/// file attached to an annotation, script on a link, and the page's own `/AA`.
+fn with_page_payloads() -> Vec<u8> {
+    let mut doc = Document::with_version("1.7");
+    let pages_id = doc.new_object_id();
+    let content_id = doc.add_object(Stream::new(Dictionary::new(), b"BT ET\n".to_vec()));
+    let file_id = doc.add_object(Stream::new(
+        dictionary! { "Type" => "EmbeddedFile" },
+        b"claimant account CZ65 0800 0000 1920 0014 5399\n".to_vec(),
+    ));
+    let fs_id = doc.add_object(dictionary! {
+        "Type" => "Filespec",
+        "F" => Object::string_literal("notes-internal.txt"),
+        "EF" => dictionary! { "F" => file_id },
+    });
+    let attach_id = doc.add_object(dictionary! {
+        "Type" => "Annot", "Subtype" => "FileAttachment",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "FS" => fs_id,
+    });
+    let link_action = doc.add_object(dictionary! {
+        "S" => "JavaScript", "JS" => Object::string_literal("app.alert('phone home')"),
+    });
+    let link_id = doc.add_object(dictionary! {
+        "Type" => "Annot", "Subtype" => "Link",
+        "Rect" => vec![40.into(), 40.into(), 60.into(), 60.into()],
+        "A" => link_action,
+    });
+    let page_action = doc.add_object(dictionary! {
+        "S" => "JavaScript", "JS" => Object::string_literal("this.print()"),
+    });
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        "Contents" => content_id,
+        "Annots" => vec![attach_id.into(), link_id.into()],
+        "AA" => dictionary! { "O" => page_action },
+    });
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages", "Kids" => vec![page_id.into()], "Count" => 1,
+        }),
+    );
+    let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    let info_id = doc.add_object(standard_info());
+    doc.trailer.set("Root", catalog_id);
+    doc.trailer.set("Info", info_id);
+    let mut out = Vec::new();
+    doc.save_to(&mut out).unwrap();
+    out
+}
+
+/// The catalog name tree is only the tidy way to attach a file: an annotation
+/// carries one just as well, and a page's `/AA` runs script without the
+/// catalog's help. Reading the catalog alone reported this document as
+/// carrying no payload at all, and cleaned it with both still in it.
+#[test]
+fn a_file_and_a_script_on_a_page_are_found_and_removed() {
+    let data = with_page_payloads();
+    let ins = Pdf.inspect(&data).unwrap();
+    let locators: Vec<&str> = ins.findings.iter().map(|f| f.locator.as_str()).collect();
+    for expected in
+        ["pdf:page:1:annot:FileAttachment", "pdf:page:1:annot:Link", "pdf:page:1:AA"]
+    {
+        assert!(locators.contains(&expected), "{expected} not reported: {locators:?}");
+    }
+    assert!(values(&ins, Class::HiddenPayload).contains("notes-internal.txt"));
+
+    let out = Pdf.clean(&data, &Profile::standard()).unwrap();
+    // Unlinking is not removing: the attached bytes must be gone from the file.
+    assert!(!out.data.windows(9).any(|w| w == b"CZ65 0800"), "the attachment survived");
+    assert!(!out.data.windows(9).any(|w| w == b"app.alert"), "the annotation script survived");
+    assert!(!out.data.windows(12).any(|w| w == b"this.print()"), "the page action survived");
+    assert!(Pdf.inspect(&out.data).unwrap().in_class(Class::HiddenPayload).next().is_none());
+
+    // The link itself is a mark on the page, so it stays; only its script went.
+    let after = Document::load_mem(&out.data).unwrap();
+    let page_id = after.get_pages()[&1];
+    let Ok(Object::Dictionary(page)) = after.get_object(page_id) else { panic!("no page") };
+    assert!(page.get(b"AA").is_err(), "the page action dictionary is still there");
+    let Ok(Object::Array(annots)) = page.get(b"Annots") else { panic!("the link went too") };
+    assert_eq!(annots.len(), 1, "{annots:?}");
+
+    // Every change names the payload it removed.
+    let changed: Vec<&str> = out.changes.iter().map(|c| c.locator.as_str()).collect();
+    assert!(changed.contains(&"pdf:page:1:annot:FileAttachment"), "{changed:?}");
+    assert!(changed.contains(&"pdf:page:1:AA"), "{changed:?}");
+}
+
+/// A profile that keeps hidden payloads leaves all of it alone, and says so.
+#[test]
+fn keeping_hidden_payloads_leaves_the_page_untouched() {
+    let data = with_page_payloads();
+    let mut profile = Profile::standard();
+    profile.actions.insert(Class::HiddenPayload, Action::Keep);
+    let out = Pdf.clean(&data, &profile).unwrap();
+    assert!(out.data.windows(9).any(|w| w == b"CZ65 0800"));
+    assert!(out.changes.iter().all(|c| !c.locator.starts_with("pdf:page:")));
+}
+
 fn values(ins: &Inspection, class: Class) -> String {
     ins.in_class(class).filter_map(|f| f.value.clone()).collect::<Vec<_>>().join(" | ")
 }

