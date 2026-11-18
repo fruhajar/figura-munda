@@ -156,6 +156,23 @@
         "total_bytes": 9284
       }
     },
+    "photo-codepage.jpg": {
+      "classes": {
+        "_contract": "Nothing in the file declares the encoding, because EXIF says these fields are ASCII and they are not. The report has to show the letters rather than replacement characters, and has to say that the encoding was a fallback, because a Central European codepage would give different accents from the same bytes.",
+        "device": [
+          "EXIF Make=M\u00fcller Zeichenb\u00fcro, in Windows-1252"
+        ],
+        "identity": [
+          "EXIF Artist=J\u00fcrgen M\u00fcller, in Windows-1252 rather than UTF-8",
+          "EXIF Copyright, same encoding",
+          "EXIF ImageDescription with German accents"
+        ]
+      },
+      "observed": {
+        "author_bytes": "4afc7267656e204dfc6c6c6572",
+        "total_bytes": 446
+      }
+    },
     "photo-phone.jpg": {
       "classes": {
         "correlation": [

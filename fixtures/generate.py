@@ -31,6 +31,9 @@ LON = (14, 26, 16.1)
 SERIAL_BODY = "BX-4471902-TT"
 SERIAL_LENS = "LN-88213-04"
 AUTHOR = "Marie Dvorakova"
+# Accented, and spelled the same in Windows-1252 and Latin-1, so what the
+# report shows is checkable rather than a guess about codepages.
+CP_AUTHOR = "Jürgen Müller"
 DOC_ID = "xmp.did:9F2C41A0-55B1-4E7C-9B30-6D1E2A77C004"
 INST_ID = "xmp.iid:1B4E7761-2C09-4F55-A0D8-3E9C5577B112"
 ORIG_ID = "xmp.oid:7C55B1A0-9F2C-41E7-B930-004C6D1E2A77"
@@ -163,6 +166,39 @@ def make_jpeg(path):
     out += jpeg_tail(base)
     open(path, "wb").write(out)
     return {"thumb_bytes": len(thumb), "total_bytes": len(out), "_thumb": thumb}
+
+
+def make_jpeg_codepage(path):
+    """EXIF text in Windows-1252 rather than UTF-8, which is what a Windows
+    tool wrote for most of the last thirty years.
+
+    EXIF says ASCII and these fields are not, so there is nothing in the file
+    that declares the encoding. Read as UTF-8 every accented letter becomes a
+    replacement character, and a report full of those says less about the file
+    than the file does.
+    """
+    base = subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+         "-i", "color=c=0x8f7a6b:s=64x48", "-frames:v", "1",
+         "-f", "image2", "-c:v", "mjpeg", "-"],
+        capture_output=True, check=True).stdout
+
+    def cp(text):
+        return E.ascii_(text.encode("cp1252").decode("latin-1"))
+
+    ifd0 = {
+        0x010F: cp("Müller Zeichenbüro"),
+        0x013B: cp(CP_AUTHOR),
+        0x8298: cp(f"(c) 2024 {CP_AUTHOR}"),
+        0x010E: cp("Lageplan für Köln-Süd, nicht veröffentlichen"),
+    }
+    out = b"\xff\xd8"
+    out += seg(0xE1, b"Exif\0\0" + E.build_exif(ifd0, {}, {}, {}, b""))
+    out += jpeg_tail(base)
+    open(path, "wb").write(out)
+    assert CP_AUTHOR.encode("cp1252") in out, "the fixture is not in a codepage at all"
+    assert CP_AUTHOR.encode("utf-8") not in out, "the fixture is UTF-8 after all"
+    return {"total_bytes": len(out), "author_bytes": CP_AUTHOR.encode("cp1252").hex()}
 
 
 # --------------------------------------------------------------------------- #
@@ -667,6 +703,17 @@ DECLARED = {
                            "copy of the 320x240 main image: the uncropped original"],
         "never_remove": ["APP2 ICC_PROFILE (0-tag stub)"],
     },
+    "photo-codepage.jpg": {
+        "identity": [f"EXIF Artist={CP_AUTHOR}, in Windows-1252 rather than UTF-8",
+                     "EXIF Copyright, same encoding",
+                     "EXIF ImageDescription with German accents"],
+        "device": ["EXIF Make=Müller Zeichenbüro, in Windows-1252"],
+        "_contract": "Nothing in the file declares the encoding, because EXIF says these "
+                     "fields are ASCII and they are not. The report has to show the "
+                     "letters rather than replacement characters, and has to say that "
+                     "the encoding was a fallback, because a Central European codepage "
+                     "would give different accents from the same bytes.",
+    },
     "screenshot.png": {
         "identity": ["tEXt Author=" + AUTHOR, "XMP dc:creator"],
         "device": ["tEXt Software=GNOME Screenshot 45.1", "tEXt Comment names the host",
@@ -789,6 +836,7 @@ def main():
     jp = make_jpeg(f"{OUT}/photo-phone.jpg")
     thumb = jp.pop("_thumb")
     facts["photo-phone.jpg"] = jp
+    facts["photo-codepage.jpg"] = make_jpeg_codepage(f"{OUT}/photo-codepage.jpg")
     facts["screenshot.png"] = make_png(f"{OUT}/screenshot.png")
     facts["report-redacted.pdf"] = make_pdf_redacted(f"{OUT}/report-redacted.pdf")
     facts["report-incremental.pdf"] = make_pdf_incremental(f"{OUT}/report-incremental.pdf")

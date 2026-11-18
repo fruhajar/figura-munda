@@ -427,7 +427,7 @@ cleaning engine, the redaction checks and the runner never will be.
 
 ## Where it stands
 
-**Tested, and the tests say what they test.** 231 of them. The engine is checked
+**Tested, and the tests say what they test.** 241 of them. The engine is checked
 against `fixtures/manifest.json`, which declares field by field what each
 generated fixture contains, so the manifest is the contract between the Python
 generator and the Rust engine and neither can quietly agree with itself. The

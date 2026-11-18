@@ -48,8 +48,10 @@ fn info_info(key: &str) -> Option<(Class, &'static str)> {
 
 fn as_text(o: &Object) -> Option<String> {
     match o {
+        // A PDF string is UTF-16 when it opens with a byte-order mark and
+        // PDFDocEncoding otherwise, which is what `text::decode` reads.
         Object::String(bytes, _) => {
-            let s = String::from_utf8_lossy(bytes).trim().to_string();
+            let s = crate::text::trimmed(bytes).0;
             (!s.is_empty()).then_some(s)
         }
         Object::Name(n) => Some(String::from_utf8_lossy(n).to_string()),

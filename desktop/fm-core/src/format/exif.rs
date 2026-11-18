@@ -116,10 +116,7 @@ impl Entry {
                 .map(|b| b.to_string())
                 .collect::<Vec<_>>()
                 .join(", "),
-            TYPE_ASCII => String::from_utf8_lossy(&self.data)
-                .trim_end_matches('\0')
-                .trim()
-                .to_string(),
+            TYPE_ASCII => crate::text::trimmed(&self.data).0,
             TYPE_SHORT if fits(self.count as usize, 2) => (0..self.count as usize)
                 .map(|i| self.u16_at(i, le).to_string())
                 .collect::<Vec<_>>()
@@ -148,10 +145,7 @@ impl Entry {
                     .take(48)
                     .all(|b| b.is_ascii_graphic() || *b == b' ' || *b == 0);
                 if printable {
-                    let s = String::from_utf8_lossy(&self.data)
-                        .trim_end_matches('\0')
-                        .trim()
-                        .to_string();
+                    let s = crate::text::trimmed(&self.data).0;
                     if s.is_empty() {
                         opaque(self.data.len())
                     } else {
@@ -162,6 +156,15 @@ impl Entry {
                 }
             }
         }
+    }
+
+    /// How this entry's text had to be read, for the text types only.
+    ///
+    /// EXIF says `ASCII` and a Windows tool writes its local codepage, so a
+    /// report that shows the letters should also be able to say that the
+    /// encoding was not the file's own claim.
+    pub fn text_encoding(&self) -> Option<crate::text::Encoding> {
+        (self.typ == TYPE_ASCII).then(|| crate::text::decode(&self.data).1)
     }
 
     /// GPS coordinates are three rationals; rendered as degrees for the report.
@@ -691,6 +694,9 @@ pub fn inspect_entries(exif: &Exif, ins: &mut Inspection) {
             .impact(impact(space));
             if !value.is_empty() {
                 f = f.value(value);
+            }
+            if let Some(caveat) = e.text_encoding().and_then(|enc| enc.caveat()) {
+                f = f.note(caveat);
             }
             if info.protected {
                 f = f.protected().note("kept on purpose: removing it would change how the file looks");

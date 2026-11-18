@@ -103,6 +103,22 @@ iptc = [p for m, p in segs if m == 0xED]
 check("IPTC By-line + City present",
       bool(iptc) and b"Marie Dvorakova" in iptc[0] and b"Praha" in iptc[0])
 
+print("\n== photo-codepage.jpg ==")
+b = open(f"{OUT}/photo-codepage.jpg", "rb").read()
+# The point of this fixture: the bytes are a codepage and nothing in the file
+# says so, which is the case a UTF-8-only reader turns into question marks.
+check("the author is in Windows-1252, not UTF-8",
+      "Jürgen Müller".encode("cp1252") in b
+      and "Jürgen Müller".encode("utf-8") not in b)
+check("the accented bytes are the ones Latin-1 agrees with",
+      b"J\xfcrgen M\xfcller" in b)
+check("the EXIF make carries accents too", "Müller Zeichenbüro".encode("cp1252") in b)
+try:
+    b.decode("utf-8")
+    check("the text is genuinely not decodable as UTF-8", False, "it decoded")
+except UnicodeDecodeError:
+    check("the text is genuinely not decodable as UTF-8", True)
+
 print("\n== screenshot.png ==")
 b = open(f"{OUT}/screenshot.png", "rb").read()
 chunks, i = {}, 8

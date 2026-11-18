@@ -74,7 +74,7 @@ pub fn properties(xml: &[u8]) -> Vec<(Class, &'static str, String, Option<String
                 for attr in e.attributes().flatten() {
                     let qname = String::from_utf8_lossy(attr.key.as_ref()).to_string();
                     if let Some((class, label)) = classify(&qname) {
-                        let value = String::from_utf8_lossy(&attr.value).to_string();
+                        let value = crate::text::text(&attr.value);
                         push(&mut found, class, label, qname, Some(value));
                     }
                 }
@@ -89,7 +89,10 @@ pub fn properties(xml: &[u8]) -> Vec<(Class, &'static str, String, Option<String
             }
             Ok(Event::Text(t)) => {
                 if let Some((class, label, qname)) = pending.clone() {
-                    let value = String::from_utf8_lossy(t.as_ref()).trim().to_string();
+                    // An XMP packet declares UTF-8 and is sometimes not, and a
+                    // name is worth more to a reader than a row of replacement
+                    // characters.
+                    let value = crate::text::text(t.as_ref()).trim().to_string();
                     if !value.is_empty() {
                         push(&mut found, class, label, qname, Some(value));
                         pending = None;

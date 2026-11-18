@@ -543,6 +543,44 @@ fn an_opendocument_file_is_refused_by_name_rather_than_reported_clean() {
     }
 }
 
+/// EXIF says these fields are ASCII and a Windows tool wrote its codepage, so
+/// nothing in the file declares the encoding. Read as UTF-8 every accented
+/// letter became U+FFFD: the window drew tofu, and a report full of question
+/// marks says less about the file than the file does.
+#[test]
+fn a_name_in_a_windows_codepage_is_shown_as_a_name() {
+    let (path, data) = fixture_or_skip!("photo-codepage.jpg");
+    let ins = inspect_bytes(&data, ext(&path).as_deref()).unwrap();
+
+    let identity = values(&ins, Class::Identity).join(" | ");
+    assert!(identity.contains("Jürgen Müller"), "{identity}");
+    assert!(values(&ins, Class::Device).join(" ").contains("Müller Zeichenbüro"));
+    assert!(identity.contains("Köln-Süd"), "{identity}");
+
+    // Nowhere in the whole report, not only in the values.
+    let everything: String = ins
+        .findings
+        .iter()
+        .map(|f| {
+            format!("{} {} {} {}", f.locator, f.label, f.value.clone().unwrap_or_default(),
+                    f.note.clone().unwrap_or_default())
+        })
+        .collect();
+    assert!(!everything.contains('\u{fffd}'), "a replacement character reached the report");
+
+    // And it says the encoding was a fallback, because the same bytes in a
+    // Central European codepage would be different letters.
+    let caveats = ins.findings.iter().filter(|f| {
+        f.note.as_deref().is_some_and(|n| n.contains("not UTF-8"))
+    });
+    assert!(caveats.count() >= 2, "the guess is not reported: {everything}");
+
+    // Cleaning is unaffected by how the bytes read.
+    let cleaned = clean_bytes(&data, ext(&path).as_deref(), &Profile::standard()).unwrap();
+    assert!(cleaned.verification.clean(), "{:?}", cleaned.verification.leftovers);
+    assert!(!cleaned.data.windows(9).any(|w| w == b"J\xfcrgen M"), "the name is still in the file");
+}
+
 #[test]
 fn every_fixture_is_either_cleaned_verifiably_or_refused_with_a_reason() {
     let names = [
@@ -553,6 +591,7 @@ fn every_fixture_is_either_cleaned_verifiably_or_refused_with_a_reason() {
         "report-redacted.pdf",
         "report-incremental.pdf",
         "signed.pdf",
+        "photo-codepage.jpg",
         "report.odt",
         "clip.mp4",
         "clip-ios.mov",

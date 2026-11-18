@@ -168,8 +168,10 @@ fn resource_info(id: u16) -> Option<(Class, &'static str, Impact)> {
     }
 }
 
+/// IPTC is ISO-8859-1 unless 1:90 declares otherwise, so a byte at a time is
+/// the specified reading and not a fallback.
 fn text(data: &[u8]) -> String {
-    String::from_utf8_lossy(data).trim().trim_end_matches('\0').to_string()
+    crate::text::trimmed(data).0
 }
 
 pub fn inspect(irb: &[u8], ins: &mut Inspection) {

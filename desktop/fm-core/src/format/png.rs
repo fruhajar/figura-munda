@@ -78,14 +78,15 @@ fn assemble(chunks: &[Chunk]) -> Vec<u8> {
 /// A text chunk's keyword and its text, whatever the three spellings.
 fn text_pair(c: &Chunk) -> Option<(String, String)> {
     let split_at = c.data.iter().position(|b| *b == 0)?;
-    let keyword = String::from_utf8_lossy(&c.data[..split_at]).to_string();
+    let keyword = crate::text::text(&c.data[..split_at]);
     let rest = &c.data[split_at + 1..];
     let text = match &c.kind {
-        b"tEXt" => String::from_utf8_lossy(rest).to_string(),
+        // tEXt and zTXt are Latin-1 by specification; iTXt is UTF-8.
+        b"tEXt" => crate::text::text(rest),
         b"zTXt" => {
             // One compression-method byte, then a zlib stream.
             let body = rest.get(1..).unwrap_or_default();
-            inflate(body).map(|v| String::from_utf8_lossy(&v).to_string()).unwrap_or_default()
+            inflate(body).map(|v| crate::text::text(&v)).unwrap_or_default()
         }
         b"iTXt" => {
             let compressed = rest.first().copied().unwrap_or(0) == 1;
@@ -97,9 +98,9 @@ fn text_pair(c: &Chunk) -> Option<(String, String)> {
                 skipped = &skipped[at + 1..];
             }
             if compressed {
-                inflate(skipped).map(|v| String::from_utf8_lossy(&v).to_string()).unwrap_or_default()
+                inflate(skipped).map(|v| crate::text::text(&v)).unwrap_or_default()
             } else {
-                String::from_utf8_lossy(skipped).to_string()
+                crate::text::text(skipped)
             }
         }
         _ => return None,

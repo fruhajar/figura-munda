@@ -168,6 +168,37 @@ fn keeping_hidden_payloads_leaves_the_page_untouched() {
     assert!(out.changes.iter().all(|c| !c.locator.starts_with("pdf:page:")));
 }
 
+/// A PDF string is UTF-16 when it opens with a byte-order mark, which is how
+/// the specification says to write a name that ASCII cannot hold. Read as
+/// bytes it came out with a NUL between every letter and a `þÿ` in front.
+#[test]
+fn an_author_written_in_utf_16_is_read_as_a_name() {
+    let mut utf16 = vec![0xfe, 0xff];
+    for unit in "Jürgen Müller".encode_utf16() {
+        utf16.extend_from_slice(&unit.to_be_bytes());
+    }
+    let info = dictionary! {
+        "Author" => Object::String(utf16, StringFormat::Hexadecimal),
+        "Creator" => Object::String(b"Mull\xe9r Zeichenb\xfcro".to_vec(), StringFormat::Literal),
+    };
+    let data = build(REDACTED, Dictionary::new(), info);
+
+    let ins = Pdf.inspect(&data).unwrap();
+    let identity = values(&ins, Class::Identity);
+    assert!(identity.contains("Jürgen Müller"), "{identity}");
+    // And PDFDocEncoding, the default for a string with no mark, which agrees
+    // with Latin-1 over the accented range.
+    let device = values(&ins, Class::Device);
+    assert!(device.contains("Mullér Zeichenbüro"), "{device}");
+    for shown in [identity, device] {
+        assert!(!shown.contains('\u{fffd}'), "a name arrived as replacement characters: {shown}");
+    }
+
+    // Removing it is unaffected by how it reads.
+    let out = Pdf.clean(&data, &Profile::standard()).unwrap();
+    assert!(Pdf.inspect(&out.data).unwrap().in_class(Class::Identity).next().is_none());
+}
+
 fn values(ins: &Inspection, class: Class) -> String {
     ins.in_class(class).filter_map(|f| f.value.clone()).collect::<Vec<_>>().join(" | ")
 }

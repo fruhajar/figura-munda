@@ -28,6 +28,7 @@ rejects. The Rust test suite runs it over every cleaned fixture.
 | Fixture | Classes exercised |
 |---|---|
 | `photo-phone.jpg` | identity, device, location, time, correlation, hidden payload, never-remove |
+| `photo-codepage.jpg` | identity, device, written in Windows-1252 with nothing in the file declaring it |
 | `screenshot.png` | identity, device, time, correlation |
 | `report-redacted.pdf` | identity, device, time, correlation, **redaction integrity**, hidden payload |
 | `report-incremental.pdf` | history (prior revision fully recoverable) |

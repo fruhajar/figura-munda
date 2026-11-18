@@ -17,6 +17,7 @@ pub mod pipeline;
 pub mod profile;
 pub mod report;
 pub mod scan;
+pub mod text;
 pub mod timeutil;
 
 pub use error::{Error, Result};

@@ -313,11 +313,19 @@ fn leaf_text(data: &[u8], b: &Box_) -> Option<String> {
     // An iTunes `ilst` entry wraps its value in a `data` box; QuickTime's
     // `udta` entries put a two-byte length and a language code first.
     let text = if body.len() > 16 && &body[4..8] == b"data" {
-        String::from_utf8_lossy(&body[16..]).to_string()
+        // The `data` box states its own encoding in a well-known type: 1 is
+        // UTF-8, 2 is UTF-16 big-endian with no byte-order mark. Reading a
+        // type 2 as UTF-8 produces a value with a NUL between every letter.
+        let kind = u32_at(data, b.body + 8).unwrap_or(1);
+        let payload = &body[16..];
+        match kind {
+            2 | 5 => crate::text::utf16be(payload),
+            _ => crate::text::text(payload),
+        }
     } else if body.len() > 4 {
-        String::from_utf8_lossy(&body[4..]).to_string()
+        crate::text::text(&body[4..])
     } else {
-        String::from_utf8_lossy(body).to_string()
+        crate::text::text(body)
     };
     let cleaned: String = text
         .chars()
@@ -992,6 +1000,38 @@ mod tests {
         assert!(locators.iter().any(|l| l.ends_with("quicktime.model")), "{locators:?}");
         assert_eq!(locators.iter().filter(|l| l.contains("quicktime.model")).count(), 1);
         assert!(!out.data.windows(4).any(|w| w == b"keys"), "the dictionary survived");
+    }
+
+    /// A `data` box states its encoding: type 2 is UTF-16 big-endian. Read as
+    /// UTF-8 it came out with a NUL between every letter, which in a report
+    /// looks like a corrupt file rather than a name.
+    #[test]
+    fn an_ilst_value_in_utf_16_is_read_as_a_name() {
+        let mut body = 2u32.to_be_bytes().to_vec();
+        body.extend_from_slice(&0u32.to_be_bytes());
+        for unit in "Jürgen Müller".encode_utf16() {
+            body.extend_from_slice(&unit.to_be_bytes());
+        }
+        let mut ilst = box_bytes(b"\xa9ART", &box_bytes(b"data", &body));
+        // And a QuickTime udta leaf in a Windows codepage, which states
+        // nothing and used to arrive as replacement characters.
+        ilst.extend_from_slice(&box_bytes(b"\xa9cmt", b"\0\x0c\x15\xc7Pro Z\xe1kazn\xedka"));
+
+        let mut moov_body =
+            mvhd(Civil { year: 2024, month: 6, day: 14, hour: 19, minute: 42, second: 7 });
+        moov_body.extend_from_slice(&box_bytes(b"udta", &box_bytes(b"ilst", &ilst)));
+        let mut data = box_bytes(b"ftyp", b"isom\0\0\x02\0isomiso2");
+        data.extend_from_slice(&box_bytes(b"moov", &moov_body));
+
+        let ins = Mp4.inspect(&data).unwrap();
+        let shown = values(&ins, Class::Identity).join(" | ");
+        assert!(shown.contains("Jürgen Müller"), "{shown}");
+        assert!(shown.contains("Pro Z"), "{shown}");
+        assert!(!shown.contains('\u{fffd}'), "a name arrived as replacement characters: {shown}");
+        assert!(!shown.contains('\0'), "a UTF-16 value was read as bytes: {shown}");
+
+        let out = Mp4.clean(&data, &Profile::standard()).unwrap();
+        assert!(Mp4.inspect(&out.data).unwrap().in_class(Class::Identity).next().is_none());
     }
 
     #[test]

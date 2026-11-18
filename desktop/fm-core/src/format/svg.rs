@@ -75,7 +75,7 @@ struct Extent {
 
 fn parse_viewbox(e: &BytesStart) -> Option<ViewBox> {
     let attr = e.attributes().flatten().find(|a| a.key.as_ref() == b"viewBox")?;
-    let text = String::from_utf8_lossy(&attr.value).to_string();
+    let text = crate::text::text(&attr.value);
     let nums: Vec<f64> = text
         .split(|c: char| c.is_whitespace() || c == ',')
         .filter(|s| !s.is_empty())
@@ -260,7 +260,7 @@ impl Handler for Svg {
                             let (class, label) = editor_attr_info(&qname);
                             ins.findings.push(
                                 Finding::new(class, format!("svg:attr:{qname}"), label)
-                                    .value(String::from_utf8_lossy(&a.value).to_string()),
+                                    .value(crate::text::text(&a.value)),
                             );
                         }
                     }
@@ -310,7 +310,7 @@ impl Handler for Svg {
                     }
                 }
                 Ok(Event::Comment(c)) => {
-                    let body = String::from_utf8_lossy(c.as_ref()).trim().to_string();
+                    let body = crate::text::text(c.as_ref()).trim().to_string();
                     if !body.is_empty() {
                         ins.findings.push(
                             Finding::new(Class::Identity, "svg:comment", "comment left in the markup")
@@ -472,7 +472,7 @@ impl Handler for Svg {
                                     class,
                                     format!("svg:attr:{qname}"),
                                     label,
-                                    Some(String::from_utf8_lossy(&a.value).to_string()),
+                                    Some(crate::text::text(&a.value)),
                                 ));
                             }
                             continue;

@@ -134,7 +134,7 @@ fn text_of(xml: &[u8], qname: &str) -> Option<String> {
             Ok(Event::Eof) | Err(_) => return None,
             Ok(Event::Start(e)) => inside = e.name().as_ref() == qname.as_bytes(),
             Ok(Event::Text(t)) if inside => {
-                let v = String::from_utf8_lossy(t.as_ref()).trim().to_string();
+                let v = crate::text::text(t.as_ref()).trim().to_string();
                 if !v.is_empty() {
                     return Some(v);
                 }
@@ -202,7 +202,7 @@ fn correlation_in(xml: &[u8]) -> Correlation {
                         .attributes()
                         .flatten()
                         .find(|a| a.key.as_ref().ends_with(b"val"))
-                        .map(|a| String::from_utf8_lossy(&a.value).to_string());
+                        .map(|a| crate::text::text(&a.value));
                 }
                 if let Some(known) = CORRELATION_ELEMENTS.iter().find(|n| **n == qname) {
                     if !out.elements.contains(known) {
@@ -229,7 +229,7 @@ fn scan_attrs(xml: &[u8], pred: impl Fn(&str) -> bool) -> Vec<(String, String)> 
                 for a in e.attributes().flatten() {
                     let key = String::from_utf8_lossy(a.key.as_ref()).to_string();
                     if pred(&key) && !out.iter().any(|(k, _)| *k == key) {
-                        out.push((key, String::from_utf8_lossy(&a.value).to_string()));
+                        out.push((key, crate::text::text(&a.value)));
                     }
                 }
             }
@@ -277,7 +277,7 @@ fn change_authors(xml: &[u8]) -> Vec<String> {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
                 for a in e.attributes().flatten() {
                     if a.key.as_ref() == b"w:author" {
-                        let v = String::from_utf8_lossy(&a.value).to_string();
+                        let v = crate::text::text(&a.value);
                         if !v.is_empty() && !out.contains(&v) {
                             out.push(v);
                         }
