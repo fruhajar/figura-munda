@@ -238,6 +238,12 @@ tools/check-trust.sh          networking crates, socket symbols, licences
 tools/check-reproducible.sh   builds twice in two paths and compares
 ```
 
+Both run on every push, in `.github/workflows/checks.yml`, alongside the suite,
+the fixture contract and the sign-off this project asks for. A check nobody is
+obliged to run is a check that stops being run, and the socket-symbol one is
+worse than that: it skips with a notice when the release binaries are absent, so
+it would pass without having looked at anything.
+
 What they found, and the nuance each one exposed:
 
 - **No dependency in any of the four closures can do networking.** 426 crates,

@@ -32,7 +32,9 @@ Two consequences worth stating plainly:
 
 Sign off commits under the [Developer Certificate of
 Origin](https://developercertificate.org/) with `git commit -s`. That is the whole
-process.
+process, and CI checks it, so a missing trailer fails the run rather than waiting
+for someone to notice in review. `git rebase --signoff <the commit before yours>`
+fixes a branch that already has commits without it.
 
 ## How the code reads
 

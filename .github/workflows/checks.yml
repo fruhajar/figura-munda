@@ -1,0 +1,176 @@
+# Every claim in the README that a machine can check, checked on every push.
+#
+# The jobs are split so a red tick says which claim broke rather than that
+# something broke: the suite, the fixture contract, the trust posture, the
+# reproducible build, and the sign-off this project asks contributors for.
+name: checks
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  tests:
+    name: tests, fixtures and clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ffmpeg writes two of the fixtures and ffprobe is the independent
+      # demuxer the MP4 tests check cleaned output with. The rest are what the
+      # window links against: wayland and xkbcommon are needed at build time,
+      # the X11 libraries are loaded at run time but their headers are cheap.
+      - name: system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg libwayland-dev libxkbcommon-dev libx11-dev libxcb1-dev
+
+      - name: cargo download cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      # The fixtures are gitignored and generated, so this is also a check that
+      # the generator still runs on a machine that has never seen them.
+      - name: generate the fixtures
+        working-directory: fixtures
+        run: python3 generate.py
+
+      # verify.py shares no parsing code with the generator: if both agreed
+      # because they agreed with each other, the manifest would prove nothing.
+      - name: check every declared claim about the fixtures
+        working-directory: fixtures
+        run: python3 verify.py
+
+      # The manifest is the contract between the generator and the engine, and
+      # it is committed, so a generator change without a regenerated manifest
+      # is how that contract goes quietly stale. Only the declarations are
+      # compared: the observed facts include byte counts from whichever ffmpeg
+      # built the clips, and a runner with a different one is not a defect.
+      - name: the committed manifest declares what the generator declares
+        run: |
+          python3 - <<'PY'
+          import json, subprocess
+          fresh = json.load(open("fixtures/manifest.json"))["fixtures"]
+          head = subprocess.run(["git", "show", "HEAD:fixtures/manifest.json"],
+                                capture_output=True, text=True, check=True).stdout
+          committed = json.loads(head)["fixtures"]
+          a = {k: v["classes"] for k, v in fresh.items()}
+          b = {k: v["classes"] for k, v in committed.items()}
+          if a != b:
+              for k in sorted(set(a) | set(b)):
+                  if a.get(k) != b.get(k):
+                      print(f"::error::{k}: the generator and the committed manifest "
+                            "declare different things; regenerate and commit it")
+              raise SystemExit(1)
+          print(f"{len(a)} fixtures declare the same classes as the committed manifest")
+          PY
+
+      - run: cargo test --workspace --locked
+
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  trust:
+    name: trust posture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwayland-dev libxkbcommon-dev libx11-dev libxcb1-dev
+
+      - name: cargo download cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      # The socket-symbol check reads the release binaries, and skips with a
+      # notice when they are absent, so the build has to come first or the
+      # check passes without having looked at anything.
+      - run: cargo build --release --workspace --locked
+
+      - run: sh tools/check-trust.sh
+
+  reproducible:
+    name: reproducible build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: cargo download cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      # Builds fm-cli twice in two different paths and compares the binaries.
+      # The path remapping is part of the release recipe, not an optimisation,
+      # and this is what says so.
+      - run: sh tools/check-reproducible.sh
+
+  signoff:
+    name: developer certificate of origin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # The pull_request default is GitHub's own merge commit, which nobody
+          # signed off and which would fail this check for no reason.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      # CONTRIBUTING.md asks for `git commit -s` and that is the whole
+      # process, so it is checked rather than hoped for.
+      - name: every new commit is signed off
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -eu
+          if [ -z "${BASE:-}" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "no usable base commit for this event, checking HEAD alone"
+            range="HEAD~1..HEAD"
+            git cat-file -e 'HEAD~1^{commit}' 2>/dev/null || range="HEAD"
+          else
+            range="$BASE..HEAD"
+          fi
+          echo "checking $range"
+          missing=0
+          for sha in $(git rev-list "$range"); do
+            if [ -z "$(git show -s --format='%(trailers:key=Signed-off-by,valueonly=true)' "$sha")" ]; then
+              echo "::error::$sha is not signed off: $(git show -s --format=%s "$sha")"
+              missing=$((missing + 1))
+            fi
+          done
+          if [ "$missing" -gt 0 ]; then
+            echo "$missing commit(s) without a Signed-off-by trailer. Add one with"
+            echo "  git rebase --signoff <the commit before yours>"
+            exit 1
+          fi
+          echo "every commit in range is signed off"
