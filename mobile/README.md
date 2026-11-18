@@ -16,16 +16,17 @@ mobile/
 `runner/` is real and covered by 32 tests that run with `cargo test`, including
 sweeps over the generated fixtures. It contains:
 
-- **`sweep::due`** — whether a sweep is owed at all: enabled, a folder chosen,
-  the interval elapsed, and the battery above a floor unless charging. A privacy
-  tool that flattens the battery gets uninstalled, which protects nobody.
-- **`decide`** — the per-file decision, with no file system in it. Whether to
-  look at a file, what cleaning it produces, and what to write down.
-- **`journal`** — what has already been done, keyed by whatever the host calls a
-  file, with the size and modification time the runner left behind. That is how
-  it recognises its own work: the camera writes `IMG_0001.jpg` and the runner
-  cleans it in place, so the name is identical before and after.
-- **`fsdrive`** — the driver for hosts that have real paths.
+- **`sweep::due`** decides whether a sweep is owed at all: enabled, a folder
+  chosen, the interval elapsed, and the battery above a floor unless charging. A
+  privacy tool that flattens the battery gets uninstalled, which protects
+  nobody.
+- **`decide`** holds the per-file decision, with no file system in it: whether
+  to look at a file, what cleaning it produces, and what to write down.
+- **`journal`** records what has already been done, keyed by whatever the host
+  calls a file, with the size and modification time the runner left behind. That
+  is how it recognises its own work: the camera writes `IMG_0001.jpg` and the
+  runner cleans it in place, so the name is identical before and after.
+- **`fsdrive`** is the driver for hosts that have real paths.
 
 Four behaviours in there are load-bearing and each has a test:
 

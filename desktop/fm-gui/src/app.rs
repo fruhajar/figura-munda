@@ -164,7 +164,7 @@ impl App {
             );
             ScrollArea::vertical().max_height(90.0).id_salt("loss").show(ui, |ui| {
                 for (name, what) in &view.content_loss {
-                    ui.label(RichText::new(format!("{name}  —  {what}")).color(palette.muted));
+                    ui.label(RichText::new(format!("{name}  {what}")).color(palette.muted));
                 }
             });
             let mut acknowledged = view.acknowledged;
