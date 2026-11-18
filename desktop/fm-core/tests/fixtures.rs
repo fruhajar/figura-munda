@@ -39,6 +39,20 @@ fn ext(path: &Path) -> Option<String> {
     path.extension().map(|e| e.to_string_lossy().to_lowercase())
 }
 
+/// What the manifest recorded about a fixture when it was generated, for the
+/// facts that are properties of the machine that generated it rather than
+/// declarations about the format.
+///
+/// The thumbnail is encoded by ffmpeg, so its byte count belongs here: this
+/// test asserted 5905 bytes and a runner with a different ffmpeg produced
+/// 5904, which said nothing about the engine. The contract worth asserting is
+/// that the engine reports the size the generator wrote down.
+fn observed(fixture: &str, key: &str) -> Option<u64> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/manifest.json");
+    let manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    manifest.get("fixtures")?.get(fixture)?.get("observed")?.get(key)?.as_u64()
+}
+
 fn values(ins: &fm_core::Inspection, class: Class) -> Vec<String> {
     ins.in_class(class)
         .filter_map(|f| f.value.clone())
@@ -83,7 +97,10 @@ fn phone_photo_reveals_every_class_the_manifest_declares() {
         .in_class(Class::HiddenPayload)
         .find(|f| f.locator == "exif:ifd1:thumbnail")
         .expect("thumbnail not reported");
-    assert_eq!(thumb.value.as_deref(), Some("5905 bytes"));
+    let declared = observed("photo-phone.jpg", "thumb_bytes")
+        .expect("the manifest does not record the thumbnail size");
+    assert_eq!(thumb.value.as_deref(), Some(format!("{declared} bytes").as_str()));
+    assert!(declared > 4000, "the thumbnail is too small to be an uncropped original");
     assert_eq!(thumb.impact, fm_core::Impact::Content, "a real preview is content, not metadata");
 
     // The colour profile is found but marked never-remove.
