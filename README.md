@@ -427,7 +427,7 @@ cleaning engine, the redaction checks and the runner never will be.
 
 ## Where it stands
 
-**Tested, and the tests say what they test.** 241 of them. The engine is checked
+**Tested, and the tests say what they test.** 244 of them. The engine is checked
 against `fixtures/manifest.json`, which declares field by field what each
 generated fixture contains, so the manifest is the contract between the Python
 generator and the Rust engine and neither can quietly agree with itself. The
@@ -447,9 +447,13 @@ engine, which is the only kind of check that means anything about output.
   meant the output whose structure was least verified was exactly the output
   going unchecked; that is now a failure, and cleaning pins the output to a
   classic table so there is nothing it cannot read.
-- **The window has never been on screen.** It was built where there is no display
-  and no Xvfb. It links and runs as far as creating a window. Nobody should call
-  the layout finished until it has been seen.
+- **The window has been on screen once**, on a tiling compositor, which found
+  two defects at once: the columns did not give way when the window was narrow,
+  and every accented letter was drawn as tofu. Both are fixed, the second in the
+  engine rather than the window, since the string reaching the renderer was
+  already ruined. What the layout does with the width it has is now a tested
+  decision rather than two minimum widths and hope, but nothing beyond those two
+  findings has been looked at by anyone, and no screenshot exists.
 - **Nothing in `mobile/android/` has been compiled.** No SDK, no NDK. It is the
   interface worked out in full and labelled unverified in every file.
 - **XLSX and PPTX** go through the OOXML handler but have had no fixture of their

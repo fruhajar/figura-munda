@@ -3,6 +3,15 @@
 //! Three columns: what you chose, the file list, and the detail of one file.
 //! The detail is where the four artefacts live, as tabs: the report, the diff,
 //! the recipient view, and the profile table that produced them.
+//!
+//! The three columns only exist while there is room for them. Each had a
+//! minimum width and nothing else, which on a tiling compositor, where the
+//! window gets the width it is given rather than the width it asked for,
+//! squeezed the detail column down to a strip and then out of the window
+//! altogether. So the panels now take their widths from what is available and
+//! always leave the detail column enough to read a report line in, and below
+//! the width where three columns can do that at all they become one column
+//! with a strip at the top to choose which.
 
 use crate::palette::{Palette, DARK, LIGHT};
 use crate::session::{DetailTab, Destination, Item, ItemState, Session, Stage};
@@ -36,17 +45,79 @@ enum Intent {
     Acknowledge(bool),
 }
 
+/// Which of the three columns is showing, when only one of them fits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Column {
+    Chosen,
+    Files,
+    Detail,
+}
+
+impl Column {
+    fn label(self) -> &'static str {
+        match self {
+            Column::Chosen => "what you chose",
+            Column::Files => "the files",
+            Column::Detail => "one file",
+        }
+    }
+}
+
+/// Three columns need this much before the detail column stops being readable.
+/// Measured against what the report lines actually are: the longest label in
+/// the class tables plus a value.
+const THREE_COLUMNS_FROM: f32 = 900.0;
+
+/// What the detail column keeps whatever the side panels are dragged to.
+const DETAIL_KEEPS: f32 = 320.0;
+
+/// What a side panel keeps, so that dragging one cannot hide it entirely.
+const COLUMN_KEEPS: f32 = 180.0;
+
+/// How the three columns divide the width available, and how far each may be
+/// dragged. `None` when three columns do not fit and the window shows one.
+struct Columns {
+    left: f32,
+    list: f32,
+    /// The widest each side panel may be dragged, which depends on the other.
+    left_max: f32,
+    list_max: f32,
+}
+
+/// Decided here rather than inline, because a window cannot be opened in a
+/// test and this is the part that was wrong.
+fn columns(room: f32) -> Option<Columns> {
+    if room < THREE_COLUMNS_FROM {
+        return None;
+    }
+    let spare = (room - DETAIL_KEEPS).max(COLUMN_KEEPS * 2.0);
+    let left = (spare * 0.45).clamp(COLUMN_KEEPS, 360.0);
+    let list = (spare - left).clamp(COLUMN_KEEPS, 460.0);
+    let ceiling = |other: f32| (room - DETAIL_KEEPS - other).max(COLUMN_KEEPS);
+    Some(Columns { left, list, left_max: ceiling(list), list_max: ceiling(left) })
+}
+
 pub struct App {
     worker: Worker,
     dark: bool,
     /// Shown instead of the file list while the profile is being edited.
     editing_profile: bool,
+    /// Which column is showing while the window is too narrow for three.
+    column: Column,
+    /// So that picking a file can bring its detail into view in one column.
+    last_selected: Option<usize>,
 }
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> App {
         let dark = cc.egui_ctx.style().visuals.dark_mode;
-        let app = App { worker: Worker::new(Session::default()), dark, editing_profile: false };
+        let app = App {
+            worker: Worker::new(Session::default()),
+            dark,
+            editing_profile: false,
+            column: Column::Chosen,
+            last_selected: None,
+        };
         app.palette().install(&cc.egui_ctx, dark);
         app
     }
@@ -65,14 +136,59 @@ impl eframe::App for App {
 
         egui::TopBottomPanel::top("head").show(ctx, |ui| self.draw_head(ui, palette, ctx));
         egui::TopBottomPanel::bottom("foot").show(ctx, |ui| self.draw_foot(ui, palette, ctx));
-        egui::SidePanel::left("left").min_width(250.0).show(ctx, |ui| {
-            if self.editing_profile {
-                self.draw_profile_editor(ui, palette);
-            } else {
-                self.draw_sources(ui, palette);
+
+        // Picking a file is a request to see it, which in one column means
+        // changing which column is showing.
+        // Nothing to notice while the worker holds the session.
+        let selected = self.worker.get().and_then(|s| s.selected);
+        if selected != self.last_selected {
+            self.last_selected = selected;
+            if selected.is_some() {
+                self.column = Column::Detail;
             }
-        });
-        egui::SidePanel::left("list").min_width(300.0).show(ctx, |ui| self.draw_list(ui, palette));
+        }
+
+        let room = ctx.available_rect().width();
+        let Some(columns) = columns(room) else {
+            egui::TopBottomPanel::top("columns").show(ctx, |ui| {
+                ui.add_space(2.0);
+                ui.horizontal_wrapped(|ui| {
+                    for option in [Column::Chosen, Column::Files, Column::Detail] {
+                        if ui.selectable_label(self.column == option, option.label()).clicked() {
+                            self.column = option;
+                        }
+                    }
+                });
+                ui.add_space(2.0);
+            });
+            egui::CentralPanel::default().show(ctx, |ui| match self.column {
+                Column::Chosen if self.editing_profile => self.draw_profile_editor(ui, palette),
+                Column::Chosen => self.draw_sources(ui, palette),
+                Column::Files => self.draw_list(ui, palette),
+                Column::Detail => self.draw_detail(ui, palette),
+            });
+            return;
+        };
+
+        // Three columns, sharing what the detail column does not need. Both
+        // side panels stay draggable, and neither can be dragged into the
+        // detail column's share.
+        egui::SidePanel::left("left")
+            .resizable(true)
+            .default_width(columns.left)
+            .width_range(COLUMN_KEEPS..=columns.left_max)
+            .show(ctx, |ui| {
+                if self.editing_profile {
+                    self.draw_profile_editor(ui, palette);
+                } else {
+                    self.draw_sources(ui, palette);
+                }
+            });
+        egui::SidePanel::left("list")
+            .resizable(true)
+            .default_width(columns.list)
+            .width_range(COLUMN_KEEPS..=columns.list_max)
+            .show(ctx, |ui| self.draw_list(ui, palette));
         egui::CentralPanel::default().show(ctx, |ui| self.draw_detail(ui, palette));
     }
 }
@@ -80,7 +196,7 @@ impl eframe::App for App {
 impl App {
     fn draw_head(&mut self, ui: &mut Ui, palette: &Palette, ctx: &egui::Context) {
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.heading(RichText::new("Figura Munda").color(palette.text));
             ui.label(
                 RichText::new("shows you what a file reveals about you, then removes it")
@@ -95,7 +211,7 @@ impl App {
         });
         ui.add_space(4.0);
         let stage = self.worker.stage();
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             for (index, s) in [Stage::Choose, Stage::Review, Stage::Done].iter().enumerate() {
                 let reached = stage_order(stage) >= stage_order(*s);
                 let colour = if reached { palette.accent } else { palette.muted };
@@ -460,7 +576,7 @@ impl App {
             return;
         };
         let mut tab = session.tab;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             for option in [
                 DetailTab::Report,
                 DetailTab::Diff,
@@ -679,6 +795,59 @@ mod tests {
         assert!(stage_order(Stage::Choose) < stage_order(Stage::Review));
         assert!(stage_order(Stage::Review) < stage_order(Stage::Done));
         assert_eq!(stage_order(Stage::Reviewing), stage_order(Stage::Review));
+    }
+
+    /// The defect this replaced: both side panels had a minimum width and
+    /// nothing else, so on a compositor that hands a window the width it likes
+    /// rather than the width it asked for, 250 and 300 of a 500-wide window
+    /// left the detail column nothing and it vanished.
+    #[test]
+    fn the_detail_column_always_keeps_room_to_read_in() {
+        let mut width = 900.0f32;
+        while width <= 3000.0 {
+            let c = columns(width).expect("three columns at this width");
+            assert!(
+                c.left + c.list + DETAIL_KEEPS <= width + 0.5,
+                "at {width}: {} + {} leaves the detail {}",
+                c.left,
+                c.list,
+                width - c.left - c.list
+            );
+            // And dragging either panel to its limit leaves the detail column
+            // its share, rather than pushing it out of the window.
+            assert!(c.left_max + c.list + DETAIL_KEEPS <= width + 0.5, "at {width}, left dragged wide");
+            assert!(c.list_max + c.left + DETAIL_KEEPS <= width + 0.5, "at {width}, list dragged wide");
+            width += 7.0;
+        }
+    }
+
+    #[test]
+    fn neither_column_can_be_dragged_away_entirely() {
+        let mut width = 900.0f32;
+        while width <= 3000.0 {
+            let c = columns(width).unwrap();
+            for (name, w, max) in
+                [("left", c.left, c.left_max), ("list", c.list, c.list_max)]
+            {
+                assert!(w >= COLUMN_KEEPS, "at {width}: {name} starts at {w}");
+                assert!(max >= COLUMN_KEEPS, "at {width}: {name} cannot reach its minimum");
+                assert!(max >= w, "at {width}: {name} starts wider than it may be dragged");
+            }
+            width += 7.0;
+        }
+    }
+
+    /// Below the threshold the columns become one, which is the only honest
+    /// answer when three cannot be read at once.
+    #[test]
+    fn a_narrow_window_shows_one_column_at_a_time() {
+        for width in [0.0, 120.0, 480.0, 700.0, 899.0] {
+            assert!(columns(width).is_none(), "three columns claimed at {width}");
+        }
+        assert!(columns(THREE_COLUMNS_FROM).is_some());
+        for option in [Column::Chosen, Column::Files, Column::Detail] {
+            assert!(!option.label().is_empty());
+        }
     }
 
     #[test]
