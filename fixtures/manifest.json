@@ -89,18 +89,24 @@
           "inkscape:version=1.3.2"
         ],
         "hidden_payload": [
-          "<text y=\"400\"> parked outside the 0 0 200 100 viewBox"
+          "<text y=\"400\"> parked outside the 0 0 200 100 viewBox, and after a closed <g transform> group"
         ],
         "identity": [
           "dc:creator/cc:Agent=Marie Dvorakova"
+        ],
+        "never_remove": [
+          "the bleed <rect x=\"-10\" y=\"-10\" width=\"220\" height=\"120\">, which is anchored off the canvas and covers all of it: visible artwork, not hidden payload, and not removable by any profile",
+          "the <rect> inside the transform group"
         ],
         "time": [
           "dc:date=2024-06-14"
         ]
       },
       "observed": {
+        "bleed_rect": "x=-10 y=-10 220x120, anchored off the canvas and covering it",
+        "closed_transform_group_before_the_parked_text": true,
         "offcanvas_text": "superseded headcount plan: -18 FTE Q3",
-        "total_bytes": 906
+        "total_bytes": 1229
       }
     },
     "letter.docx": {

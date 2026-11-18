@@ -215,6 +215,14 @@ check("inkscape version + sodipodi docname present",
 check("dc:creator present", "Marie Dvorakova" in s)
 check("off-canvas text outside the viewBox", 'y="400"' in s
       and 'viewBox="0 0 200 100"' in s and "-18 FTE Q3" in s)
+# The two traps: a bleed rect is visible artwork anchored off the canvas, and
+# the parked text comes after a transform group that has already closed.
+check("a bleed rect is anchored off the canvas and covers it",
+      'x="-10" y="-10" width="220" height="120"' in s)
+check("the parked text follows a closed transform group",
+      s.index("</g>") < s.index('y="400"') and s.count("<g transform") == 1)
+check("the transform group holds visible artwork",
+      s.index('x="10" y="20"') > s.index("<g transform"))
 
 print("\n== clip.mp4 ==")
 b = open(f"{OUT}/clip.mp4", "rb").read()

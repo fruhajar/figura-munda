@@ -527,8 +527,14 @@ SVG = f"""<?xml version="1.0" encoding="UTF-8"?>
   <dc:creator><cc:Agent><dc:title>{AUTHOR}</dc:title></cc:Agent></dc:creator>
   <dc:date>2024-06-14</dc:date>
  </cc:Work></rdf:RDF></metadata>
- <rect x="10" y="20" width="180" height="60" fill="#6b7a8f"/>
- <!-- Parked outside the viewBox: invisible on render, present in the file. -->
+ <!-- A bleed background: anchored off the canvas, covering all of it. -->
+ <rect x="-10" y="-10" width="220" height="120" fill="#6b7a8f"/>
+ <g transform="translate(4,2)" inkscape:label="Layer 1">
+  <rect x="10" y="20" width="180" height="60" fill="#8f7a6b"/>
+ </g>
+ <!-- Parked outside the viewBox: invisible on render, present in the file.
+      It follows a closed transform group, which is what a counter that never
+      came back down could not see past. -->
  <text x="40" y="400" font-size="10">superseded headcount plan: -18 FTE Q3</text>
 </svg>"""
 
@@ -536,7 +542,9 @@ SVG = f"""<?xml version="1.0" encoding="UTF-8"?>
 def make_svg(path):
     open(path, "w").write(SVG)
     return {"total_bytes": os.path.getsize(path),
-            "offcanvas_text": "superseded headcount plan: -18 FTE Q3"}
+            "offcanvas_text": "superseded headcount plan: -18 FTE Q3",
+            "bleed_rect": "x=-10 y=-10 220x120, anchored off the canvas and covering it",
+            "closed_transform_group_before_the_parked_text": True}
 
 
 def qt_text_atom(typ, text, lang=0x15C7):
@@ -697,7 +705,12 @@ DECLARED = {
         "device": ["inkscape:version=1.3.2"],
         "time": ["dc:date=2024-06-14"],
         "correlation": ["sodipodi:docname=org-chart-INTERNAL-v4.svg"],
-        "hidden_payload": ["<text y=\"400\"> parked outside the 0 0 200 100 viewBox"],
+        "hidden_payload": ["<text y=\"400\"> parked outside the 0 0 200 100 viewBox, and "
+                           "after a closed <g transform> group"],
+        "never_remove": ["the bleed <rect x=\"-10\" y=\"-10\" width=\"220\" height=\"120\">, "
+                         "which is anchored off the canvas and covers all of it: visible "
+                         "artwork, not hidden payload, and not removable by any profile",
+                         "the <rect> inside the transform group"],
     },
     "clip.mp4": {
         "location": ["moov/udta \\xa9xyz = +50.0755+014.4378/ (hand-injected; the form "

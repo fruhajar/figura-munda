@@ -54,9 +54,23 @@ struct ViewBox {
 }
 
 impl ViewBox {
-    fn contains(&self, x: f64, y: f64) -> bool {
-        x >= self.x - 1.0 && y >= self.y - 1.0 && x <= self.x + self.w + 1.0 && y <= self.y + self.h + 1.0
+    /// Whether any part of `ext` lands on the canvas. The one-unit slack keeps
+    /// a shape sitting exactly on the edge visible.
+    fn shows(&self, ext: &Extent) -> bool {
+        ext.x1 >= self.x - 1.0
+            && ext.y1 >= self.y - 1.0
+            && ext.x0 <= self.x + self.w + 1.0
+            && ext.y0 <= self.y + self.h + 1.0
     }
+}
+
+/// The box an element occupies, in the coordinates it states.
+#[derive(Clone, Copy, Debug)]
+struct Extent {
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
 }
 
 fn parse_viewbox(e: &BytesStart) -> Option<ViewBox> {
@@ -70,31 +84,91 @@ fn parse_viewbox(e: &BytesStart) -> Option<ViewBox> {
     (nums.len() == 4).then(|| ViewBox { x: nums[0], y: nums[1], w: nums[2], h: nums[3] })
 }
 
-/// A position for an element, if it states one plainly enough to judge.
+/// The box an element occupies, if it states one plainly enough to judge.
 ///
 /// Only elements that place themselves with literal coordinates and carry no
 /// transform are considered: a transform could put the content back on screen,
 /// and reporting visible content as hidden would be worse than missing some.
-fn plain_position(e: &BytesStart) -> Option<(f64, f64)> {
+///
+/// The extent is what matters, not the anchor. A bleed rectangle starts
+/// outside the canvas and covers all of it, so judging it by its anchor called
+/// the background hidden payload and `uniform` then deleted the artwork. Where
+/// no extent is stated (`text`, `tspan`, a `use` without a size) the anchor is
+/// all there is. A number that is not plain, a percentage or a unit or a
+/// calc, makes the extent unknown, which is not the same as off the canvas:
+/// neither is judged.
+fn plain_extent(e: &BytesStart, local: &str) -> Option<Extent> {
     let mut x = None;
     let mut y = None;
+    let mut w = None;
+    let mut h = None;
+    let mut r = None;
+    let mut rx = None;
+    let mut ry = None;
     for a in e.attributes().flatten() {
         let key = a.key.as_ref();
         if key == b"transform" {
             return None;
         }
-        let value: Option<f64> = String::from_utf8_lossy(&a.value).trim().parse().ok();
+        if !matches!(
+            key,
+            b"x" | b"y" | b"cx" | b"cy" | b"width" | b"height" | b"r" | b"rx" | b"ry"
+        ) {
+            continue;
+        }
+        let value: f64 = String::from_utf8_lossy(&a.value).trim().parse().ok()?;
         match key {
-            b"x" | b"cx" => x = value,
-            b"y" | b"cy" => y = value,
+            b"x" | b"cx" => x = Some(value),
+            b"y" | b"cy" => y = Some(value),
+            b"width" => w = Some(value),
+            b"height" => h = Some(value),
+            b"r" => r = Some(value),
+            b"rx" => rx = Some(value),
+            b"ry" => ry = Some(value),
             _ => {}
         }
     }
-    match (x, y) {
-        (Some(x), Some(y)) => Some((x, y)),
-        (None, Some(y)) => Some((0.0, y)),
-        (Some(x), None) => Some((x, 0.0)),
-        _ => None,
+    if x.is_none() && y.is_none() {
+        return None;
+    }
+    let (x, y) = (x.unwrap_or(0.0), y.unwrap_or(0.0));
+    // A circle or an ellipse states a centre and radii; everything else states
+    // a corner and, when it states a size at all, a width and a height.
+    let (dx0, dy0, dx1, dy1) = match local {
+        "circle" => {
+            let r = r.unwrap_or(0.0).abs();
+            (-r, -r, r, r)
+        }
+        "ellipse" => {
+            let rx = rx.or(r).unwrap_or(0.0).abs();
+            let ry = ry.or(r).unwrap_or(0.0).abs();
+            (-rx, -ry, rx, ry)
+        }
+        _ => (0.0, 0.0, w.unwrap_or(0.0).max(0.0), h.unwrap_or(0.0).max(0.0)),
+    };
+    Some(Extent { x0: x + dx0, y0: y + dy0, x1: x + dx1, y1: y + dy1 })
+}
+
+/// Whether an open ancestor carries a `transform`.
+///
+/// Counting transforms and clamping the count to the element depth looked
+/// equivalent to this and was not: the count never came back down, so one
+/// `<g transform>` anywhere above switched the off-canvas check off for the
+/// rest of the file, in the report and in the clean alike.
+#[derive(Default)]
+struct TransformStack(Vec<bool>);
+
+impl TransformStack {
+    fn open(&mut self, e: &BytesStart) {
+        self.0.push(e.attributes().flatten().any(|a| a.key.as_ref() == b"transform"));
+    }
+
+    fn close(&mut self) {
+        self.0.pop();
+    }
+
+    fn inside(&self) -> bool {
+        self.0.iter().any(|&t| t)
     }
 }
 
@@ -125,8 +199,7 @@ impl Handler for Svg {
         let mut viewbox: Option<ViewBox> = None;
         let mut in_metadata = 0usize;
         let mut metadata_xml: Vec<u8> = Vec::new();
-        let mut transform_depth = 0usize;
-        let mut depth = 0usize;
+        let mut transform = TransformStack::default();
         let mut saw_root = false;
 
         loop {
@@ -136,12 +209,17 @@ impl Handler for Svg {
                     return Err(Error::malformed(FormatId::Svg, format!("XML: {e}")));
                 }
                 Ok(Event::Eof) => break,
-                Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                Ok(ev @ (Event::Start(_) | Event::Empty(_))) => {
+                    let (e, is_empty) = match &ev {
+                        Event::Start(e) => (e, false),
+                        Event::Empty(e) => (e, true),
+                        _ => unreachable!(),
+                    };
                     let name = e.name().as_ref().to_vec();
                     let local = local_of(&name).to_string();
                     if !saw_root && local == "svg" {
                         saw_root = true;
-                        viewbox = parse_viewbox(&e);
+                        viewbox = parse_viewbox(e);
                     }
                     if local == "metadata" {
                         in_metadata += 1;
@@ -149,7 +227,7 @@ impl Handler for Svg {
                     }
                     if in_metadata > 0 {
                         metadata_xml.extend_from_slice(b"<");
-                        metadata_xml.extend_from_slice(&e);
+                        metadata_xml.extend_from_slice(&e[..]);
                         metadata_xml.extend_from_slice(b">");
                     }
                     if local == "script" {
@@ -188,9 +266,10 @@ impl Handler for Svg {
                     }
                     // Content parked off the canvas.
                     if let (Some(vb), true) = (viewbox, DRAWABLE.contains(&local.as_str())) {
-                        if transform_depth == 0 {
-                            if let Some((x, y)) = plain_position(&e) {
-                                if !vb.contains(x, y) {
+                        if !transform.inside() {
+                            if let Some(ext) = plain_extent(e, &local) {
+                                if !vb.shows(&ext) {
+                                    let (x, y) = (ext.x0, ext.y0);
                                     ins.mark("svg:offcanvas");
                                     ins.findings.push(
                                         Finding::new(
@@ -209,10 +288,9 @@ impl Handler for Svg {
                             }
                         }
                     }
-                    if e.attributes().flatten().any(|a| a.key.as_ref() == b"transform") {
-                        transform_depth += 1;
+                    if !is_empty {
+                        transform.open(e);
                     }
-                    depth += 1;
                 }
                 Ok(Event::End(e)) => {
                     let name = e.name().as_ref().to_vec();
@@ -224,8 +302,7 @@ impl Handler for Svg {
                     if local_of(&name) == "metadata" {
                         in_metadata = in_metadata.saturating_sub(1);
                     }
-                    depth = depth.saturating_sub(1);
-                    transform_depth = transform_depth.min(depth);
+                    transform.close();
                 }
                 Ok(Event::Text(t)) => {
                     if in_metadata > 0 {
@@ -275,7 +352,7 @@ impl Handler for Svg {
         let mut skip_until: Option<(Vec<u8>, usize)> = None;
         let mut depth = 0usize;
         let mut viewbox: Option<ViewBox> = None;
-        let mut transform_depth = 0usize;
+        let mut transform = TransformStack::default();
         let mut saw_root = false;
 
         loop {
@@ -357,9 +434,10 @@ impl Handler for Svg {
                         buf.clear();
                         continue;
                     }
-                    if drop_offcanvas && transform_depth == 0 && DRAWABLE.contains(&local.as_str()) {
-                        if let (Some(vb), Some((x, y))) = (viewbox, plain_position(e)) {
-                            if !vb.contains(x, y) {
+                    if drop_offcanvas && !transform.inside() && DRAWABLE.contains(&local.as_str()) {
+                        if let (Some(vb), Some(ext)) = (viewbox, plain_extent(e, &local)) {
+                            let (x, y) = (ext.x0, ext.y0);
+                            if !vb.shows(&ext) {
                                 changes.push(Change::removed(
                                     Class::HiddenPayload,
                                     format!("svg:offcanvas:{local}@{x},{y}"),
@@ -404,13 +482,13 @@ impl Handler for Svg {
                     let out = if is_empty { Event::Empty(kept) } else { Event::Start(kept) };
                     writer.write_event(out).ok();
 
-                    if !is_empty && e.attributes().flatten().any(|a| a.key.as_ref() == b"transform") {
-                        transform_depth += 1;
+                    if !is_empty {
+                        transform.open(e);
                     }
                 }
                 Event::End(_) => {
                     depth = depth.saturating_sub(1);
-                    transform_depth = transform_depth.min(depth);
+                    transform.close();
                     writer.write_event(event).ok();
                 }
                 other => {
@@ -511,6 +589,64 @@ mod tests {
 </svg>"#;
         let ins = Svg.inspect(drawing).unwrap();
         assert!(ins.in_class(Class::HiddenPayload).next().is_none());
+    }
+
+    /// One closed `<g transform>` used to switch the check off for the rest of
+    /// the file: the transform count was clamped to the element depth and never
+    /// came back down. The parked text after the group went unreported and,
+    /// under `uniform`, unremoved.
+    #[test]
+    fn a_closed_transform_group_does_not_switch_the_check_off() {
+        let drawing = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">
+  <g transform="translate(10,10)"><rect x="0" y="0" width="20" height="20"/></g>
+  <g transform="rotate(4)"><circle cx="50" cy="50" r="8"/></g>
+  <text x="10" y="400">superseded headcount plan: -18 FTE Q3</text>
+</svg>"#;
+        let ins = Svg.inspect(drawing).unwrap();
+        let hidden = ins.in_class(Class::HiddenPayload).next().expect("parked text not found");
+        assert!(hidden.locator.contains("text@10,400"), "{}", hidden.locator);
+
+        let out = Svg.clean(drawing, &Profile::uniform()).unwrap();
+        let text = String::from_utf8_lossy(&out.data);
+        assert!(!text.contains("-18 FTE Q3"), "the parked text survived uniform");
+        // The visible drawing is all still there.
+        assert!(text.contains("<circle") && text.contains("<rect"), "{text}");
+    }
+
+    /// A bleed rectangle starts outside the canvas and covers all of it. Judged
+    /// by its anchor it looked like hidden payload, and `uniform` deleted the
+    /// artwork and reported it as a removal.
+    #[test]
+    fn a_bleed_rectangle_that_covers_the_canvas_is_not_hidden_payload() {
+        let drawing = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">
+  <rect x="-10" y="-10" width="220" height="120" fill="#6b7a8f"/>
+  <circle cx="-4" cy="20" r="30"/>
+  <image x="-20" y="-20" width="40" height="40" href="a.png"/>
+  <rect x="-300" y="-300" width="10" height="10"/>
+</svg>"##;
+        let ins = Svg.inspect(drawing).unwrap();
+        let hidden: Vec<&str> = ins.in_class(Class::HiddenPayload).map(|f| f.locator.as_str()).collect();
+        assert_eq!(hidden, vec!["svg:offcanvas:rect@-300,-300"], "{hidden:?}");
+
+        let out = Svg.clean(drawing, &Profile::uniform()).unwrap();
+        let text = String::from_utf8_lossy(&out.data);
+        assert!(text.contains(r#"width="220""#), "the bleed rectangle was deleted: {text}");
+        assert!(text.contains("<circle") && text.contains("<image"), "{text}");
+        assert!(!text.contains(r#"x="-300""#), "the parked rectangle survived");
+        assert_eq!(out.changes.iter().filter(|c| c.locator.contains("offcanvas")).count(), 1);
+    }
+
+    /// A size that is not a plain number leaves the extent unknown, which is
+    /// not the same as off the canvas.
+    #[test]
+    fn an_extent_in_percent_is_not_judged_either_way() {
+        let drawing = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">
+  <rect x="-10" y="-10" width="100%" height="100%"/>
+</svg>"#;
+        let ins = Svg.inspect(drawing).unwrap();
+        assert!(ins.in_class(Class::HiddenPayload).next().is_none());
+        let out = Svg.clean(drawing, &Profile::uniform()).unwrap();
+        assert!(String::from_utf8_lossy(&out.data).contains("100%"));
     }
 
     #[test]

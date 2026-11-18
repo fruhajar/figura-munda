@@ -244,6 +244,18 @@ fn the_drawing_reveals_its_editor_its_filename_and_the_plan_parked_off_canvas() 
     let correlation = values(&ins, Class::Correlation).join(" ");
     assert!(correlation.contains("org-chart-INTERNAL-v4.svg"), "{correlation}");
     assert!(ins.shape.contains(&"svg:offcanvas".to_string()), "{:?}", ins.shape);
+
+    // The parked text comes after a transform group that has already closed,
+    // and the only thing reported as hidden is the text itself: the bleed
+    // rectangle is anchored off the canvas and covers all of it, which is
+    // artwork.
+    let hidden: Vec<&str> = ins
+        .findings
+        .iter()
+        .filter(|f| f.locator.starts_with("svg:offcanvas"))
+        .map(|f| f.locator.as_str())
+        .collect();
+    assert_eq!(hidden, vec!["svg:offcanvas:text@40,400"], "{hidden:?}");
 }
 
 #[test]
@@ -258,6 +270,23 @@ fn cleaning_the_drawing_takes_the_off_canvas_text_with_it() {
     assert!(!text.contains("org-chart-INTERNAL"), "{text}");
     // Still a drawing: the visible content and the viewBox are untouched.
     assert!(text.contains("viewBox"), "{text}");
+    assert!(text.contains(r#"width="220""#), "the bleed background was deleted:\n{text}");
+    assert!(text.contains(r#"x="10" y="20""#), "the artwork in the group went:\n{text}");
+
+    // And under every profile, including the one that rewrites most.
+    for profile in Profile::builtins() {
+        if profile.inert() {
+            continue;
+        }
+        let out = clean_bytes(&data, ext(&path).as_deref(), &profile).unwrap();
+        let text = String::from_utf8(out.data).unwrap();
+        assert!(
+            text.contains(r#"width="220""#) && text.contains(r#"x="10" y="20""#),
+            "{}: visible artwork was removed:\n{text}",
+            profile.name
+        );
+        assert!(!text.contains("-18 FTE"), "{}: the parked text survived", profile.name);
+    }
 
     // Removing visible content is the kind of change that has to be confirmed,
     // so it must be flagged before anything is written.
