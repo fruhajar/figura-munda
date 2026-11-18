@@ -461,6 +461,8 @@ fn every_fixture_is_either_cleaned_verifiably_or_refused_with_a_reason() {
         "report-incremental.pdf",
         "signed.pdf",
         "clip.mp4",
+        "clip-ios.mov",
+        "clip-truncated.mp4",
     ];
     for name in names {
         let Some((path, data)) = fixture(name) else { continue };
@@ -478,6 +480,12 @@ fn every_fixture_is_either_cleaned_verifiably_or_refused_with_a_reason() {
                 Err(fm_core::Error::Refused(why)) => {
                     assert!(!why.is_empty(), "{name} refused with no reason");
                     assert_eq!(name, "signed.pdf", "{name} was refused unexpectedly: {why}");
+                }
+                // An incomplete copy is the one case where refusing to answer
+                // is the answer: see the fixture's declared contract.
+                Err(fm_core::Error::Malformed { detail, .. }) => {
+                    assert_eq!(name, "clip-truncated.mp4", "{name} is malformed: {detail}");
+                    assert!(detail.contains("incomplete"), "{detail}");
                 }
                 Err(e) => panic!("{name} under {}: {e}", profile.name),
             }
@@ -502,11 +510,74 @@ fn the_clip_reveals_where_and_on_what_it_was_recorded() {
     assert!(ins.shape.contains(&"mp4:udta".to_string()));
 }
 
+/// What a recent iPhone writes: the values sit in a numbered `ilst` and the
+/// names only in the sibling `keys` dictionary, so a handler that knows
+/// four-byte atom types alone reports this file as holding nothing but its
+/// filesystem dates. `ffprobe` reads the same keys back, which is what makes
+/// the fixture evidence rather than an assumption.
+#[test]
+fn the_ios_clip_reveals_what_only_the_keys_dictionary_names() {
+    let (path, data) = fixture_or_skip!("clip-ios.mov");
+    let ins = inspect_bytes(&data, ext(&path).as_deref()).unwrap();
+    assert_eq!(ins.format, FormatId::Mp4);
+
+    let device = values(&ins, Class::Device).join(" | ");
+    assert!(device.contains("iPhone 14 Pro"), "{device}");
+    assert!(device.contains("Apple"), "{device}");
+    assert!(device.contains("17.4.1"), "{device}");
+    let location = values(&ins, Class::Location).join(" | ");
+    assert!(location.contains("+50.0755+014.4378"), "{location}");
+    assert!(values(&ins, Class::Time).join(" ").contains("2024-06-14T19:42:07"));
+    let correlation = values(&ins, Class::Correlation).join(" | ");
+    assert!(correlation.contains("9F2C14D8"), "{correlation}");
+
+    // Each finding names the key it came from, so the report can say which
+    // field it means rather than quoting an index.
+    let labels: String = ins.findings.iter().map(|f| f.label.as_str()).collect();
+    assert!(labels.contains("com.apple.quicktime.model"), "{labels}");
+
+    let cleaned = clean_bytes(&data, ext(&path).as_deref(), &Profile::standard()).unwrap();
+    assert!(cleaned.verification.clean(), "{:?}", cleaned.verification.leftovers);
+    let after = inspect_bytes(&cleaned.data, ext(&path).as_deref()).unwrap();
+    for class in [Class::Device, Class::Location, Class::Correlation] {
+        assert!(values(&after, class).is_empty(), "{class:?} survived: {:?}", values(&after, class));
+    }
+    // The dictionary goes with the values: on its own it still names every
+    // field the recorder wrote.
+    assert!(!cleaned.data.windows(4).any(|w| w == b"keys"), "the keys dictionary survived");
+}
+
+/// A copy that stopped short. Every declared field is still in the bytes and
+/// `ffprobe` still hands them out, so the honest answer is a refusal; the
+/// field count this used to report was a false clean on a file that had lost
+/// nothing.
+#[test]
+fn an_interrupted_copy_is_refused_rather_than_part_read() {
+    let (path, data) = fixture_or_skip!("clip-truncated.mp4");
+    match inspect_bytes(&data, ext(&path).as_deref()) {
+        Err(fm_core::Error::Malformed { detail, .. }) => {
+            assert!(detail.contains("incomplete"), "{detail}")
+        }
+        Err(e) => panic!("expected a refusal naming the cause, got {e}"),
+        Ok(ins) => panic!("a truncated clip inspected as {} fields", ins.findings.len()),
+    }
+    assert!(clean_bytes(&data, ext(&path).as_deref(), &Profile::standard()).is_err());
+}
+
 /// The output has to be a file a player will still open, and the only honest
 /// check for that is an independent demuxer. `ffprobe` is the one to hand.
 #[test]
 fn a_cleaned_clip_still_demuxes() {
-    let (path, data) = fixture_or_skip!("clip.mp4");
+    for name in ["clip.mp4", "clip-ios.mov"] {
+        a_cleaned_clip_still_demuxes_one(name);
+    }
+}
+
+fn a_cleaned_clip_still_demuxes_one(name: &str) {
+    let Some((path, data)) = fixture(name) else {
+        eprintln!("skipping: fixtures/out/{name} absent, run fixtures/generate.py");
+        return;
+    };
     if std::process::Command::new("ffprobe").arg("-version").output().is_err() {
         eprintln!("skipping: ffprobe is not installed");
         return;
@@ -521,7 +592,7 @@ fn a_cleaned_clip_still_demuxes() {
         let cleaned = clean_bytes(&data, ext(&path).as_deref(), &profile).unwrap();
         assert!(cleaned.verification.clean(), "{:?}", cleaned.verification.leftovers);
 
-        let out = dir.join(format!("{}.mp4", profile.name));
+        let out = dir.join(format!("{name}.{}.mp4", profile.name));
         std::fs::write(&out, &cleaned.data).unwrap();
         let probe = std::process::Command::new("ffprobe")
             .args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"])
@@ -541,9 +612,9 @@ fn a_cleaned_clip_still_demuxes() {
             .output()
             .unwrap();
         let tags = String::from_utf8_lossy(&tags.stdout).to_string();
-        assert!(!tags.contains("Marie"), "{}: ffprobe still sees {tags}", profile.name);
-        assert!(!tags.contains("iPhone"), "{}: ffprobe still sees {tags}", profile.name);
-        assert!(!tags.contains("50.07"), "{}: ffprobe still sees {tags}", profile.name);
+        for leak in ["Marie", "iPhone", "50.07", "9F2C14D8", "17.4.1"] {
+            assert!(!tags.contains(leak), "{name} under {}: ffprobe still sees {tags}", profile.name);
+        }
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

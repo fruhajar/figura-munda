@@ -99,8 +99,8 @@ fn parse_boxes(data: &[u8], from: usize, to: usize, depth: usize) -> Vec<Box_> {
         if at + size > to {
             break;
         }
-        // `meta` carries a version and flags word before its children.
-        let child_start = if &kind == b"meta" { body + 4 } else { body };
+        let child_start =
+            if &kind == b"meta" { meta_child_start(data, body, at + size) } else { body };
         let children = if is_container(&kind) {
             parse_boxes(data, child_start, at + size, depth + 1)
         } else {
@@ -122,6 +122,72 @@ fn root(data: &[u8]) -> Box_ {
     }
 }
 
+/// Whether the bytes at `at` read as a box header that fits inside `end`.
+fn looks_like_box(data: &[u8], at: usize, end: usize) -> bool {
+    let Some(size) = u32_at(data, at).map(|n| n as usize) else { return false };
+    let Some(kind) = data.get(at + 4..at + 8) else { return false };
+    size >= 8 && at + size <= end && kind.iter().all(|b| matches!(b, 0x20..=0x7e | 0xa9))
+}
+
+/// ISO base media's `meta` is a FullBox: a version and flags word sits ahead
+/// of its children. QuickTime's `meta`, which is what a `.mov` carries, has no
+/// such word, and assuming it does puts every child four bytes out, so the box
+/// reads as empty and nothing inside it ever reaches a report.
+fn meta_child_start(data: &[u8], body: usize, end: usize) -> usize {
+    if looks_like_box(data, body, end) {
+        body
+    } else {
+        body + 4
+    }
+}
+
+/// Where the top-level box chain stops covering the file, if it does.
+///
+/// Parsing is forgiving everywhere else, and here it must not be. An
+/// interrupted copy leaves the last box declaring more bytes than are present,
+/// and `moov` is usually last, so the box that goes missing is exactly the one
+/// holding the metadata: the file would inspect as near-empty, clean to
+/// "nothing changed" and verify as clean while the original still holds every
+/// field.
+fn truncated_at(data: &[u8]) -> Option<usize> {
+    let mut at = 0usize;
+    while at < data.len() {
+        if at + 8 > data.len() {
+            return Some(at);
+        }
+        let Some(declared) = u32_at(data, at) else { return Some(at) };
+        let size = match declared {
+            0 => data.len() - at,
+            1 => match u64_at(data, at + 8) {
+                Some(big) if big >= 16 => big as usize,
+                _ => return Some(at),
+            },
+            n if n >= 8 => n as usize,
+            _ => return Some(at),
+        };
+        if at + size > data.len() {
+            return Some(at);
+        }
+        at += size;
+    }
+    None
+}
+
+/// The box tree, refusing a file whose boxes do not account for every byte.
+fn checked_tree(data: &[u8]) -> Result<Box_> {
+    let tree = root(data);
+    if tree.children.is_empty() {
+        return Err(Error::malformed(FormatId::Mp4, "no boxes"));
+    }
+    if let Some(at) = truncated_at(data) {
+        return Err(Error::malformed(
+            FormatId::Mp4,
+            format!("the box tree stops covering the file at byte {at}; the copy is incomplete"),
+        ));
+    }
+    Ok(tree)
+}
+
 /// What a `udta` or `ilst` leaf means. The `\xa9` prefix is QuickTime's.
 fn leaf_info(kind: &[u8; 4]) -> Option<(Class, &'static str)> {
     let i = |c: Class, l: &'static str| Some((c, l));
@@ -132,7 +198,7 @@ fn leaf_info(kind: &[u8; 4]) -> Option<(Class, &'static str)> {
         b"\xa9mod" | b"modl" => i(Class::Device, "the model of the device that recorded it"),
         b"\xa9swr" => i(Class::Device, "the software that wrote it"),
         b"\xa9too" => i(Class::Device, "the encoder that wrote it"),
-        b"\xa9dat" | b"date" => i(Class::Time, "the date it was recorded"),
+        b"\xa9dat" | b"\xa9day" | b"date" => i(Class::Time, "the date it was recorded"),
         b"\xa9ART" | b"auth" => i(Class::Identity, "the artist or author"),
         b"\xa9nam" | b"titl" => i(Class::Identity, "the title"),
         b"\xa9cmt" | b"desc" => i(Class::Identity, "a comment or description"),
@@ -144,6 +210,101 @@ fn leaf_info(kind: &[u8; 4]) -> Option<(Class, &'static str)> {
         b"\xa9enc" => i(Class::Device, "the encoding tool"),
         _ => None,
     }
+}
+
+/// The `keys`/`ilst` pair iOS writes into `moov/meta`: the `ilst` children are
+/// numbered rather than named, and `keys` is the dictionary saying what each
+/// number means. A handler that only knows four-byte types sees nothing there,
+/// and that is most of what a recent iPhone records.
+struct KeyTable {
+    /// Entry *i* names key id *i + 1*.
+    names: Vec<String>,
+    keys: (usize, usize),
+    ilst: (usize, usize),
+}
+
+fn key_tables(data: &[u8], tree: &Box_) -> Vec<KeyTable> {
+    let mut out = Vec::new();
+    for meta in tree.descendants() {
+        if &meta.kind != b"meta" {
+            continue;
+        }
+        let child = |k: &[u8; 4]| meta.children.iter().find(|c| &c.kind == k);
+        if let (Some(keys), Some(ilst)) = (child(b"keys"), child(b"ilst")) {
+            out.push(KeyTable {
+                names: key_names(data, keys),
+                keys: (keys.at, keys.end()),
+                ilst: (ilst.at, ilst.end()),
+            });
+        }
+    }
+    out
+}
+
+/// `keys` is a version and flags word, a count, then one entry per key: a
+/// size, a four-byte namespace, and the name.
+fn key_names(data: &[u8], keys: &Box_) -> Vec<String> {
+    let count = u32_at(data, keys.body + 4).unwrap_or(0) as usize;
+    let mut names = Vec::new();
+    let mut at = keys.body + 8;
+    for _ in 0..count.min(1024) {
+        let Some(size) = u32_at(data, at).map(|n| n as usize) else { break };
+        if size < 8 || at + size > keys.end() {
+            break;
+        }
+        let name = data.get(at + 8..at + size).unwrap_or(&[]);
+        names.push(String::from_utf8_lossy(name).trim().to_string());
+        at += size;
+    }
+    names
+}
+
+fn key_name(keys: &[KeyTable], b: &Box_) -> Option<String> {
+    keys.iter().find_map(|t| {
+        if b.at < t.ilst.0 || b.end() > t.ilst.1 {
+            return None;
+        }
+        t.names.get(u32::from_be_bytes(b.kind).checked_sub(1)? as usize).cloned()
+    })
+}
+
+/// What one named key reveals. The namespace prefix varies by writer, so the
+/// match is on what the name contains, and a name nothing here recognises is
+/// still a per-device tag worth reporting rather than passing over in silence.
+fn apple_key_info(name: &str) -> (Class, String) {
+    let n = name.to_ascii_lowercase();
+    let (class, label): (Class, &str) = if n.contains("location") {
+        (Class::Location, "the place the video was taken")
+    } else if n.contains("make") {
+        (Class::Device, "the make of the device that recorded it")
+    } else if n.contains("model") {
+        (Class::Device, "the model of the device that recorded it")
+    } else if n.contains("software") || n.contains("encoder") || n.contains("camera") {
+        (Class::Device, "the software or camera that wrote it")
+    } else if n.contains("date") {
+        (Class::Time, "the date it was recorded")
+    } else if n.contains("signature") || n.contains("identifier") || n.contains("uuid") {
+        (Class::Correlation, "an identifier tying this file to others from the same device")
+    } else if n.contains("author") || n.contains("artist") || n.contains("title")
+        || n.contains("description") || n.contains("comment") || n.contains("copyright")
+        || n.contains("album")
+    {
+        (Class::Identity, "a name or description the recorder stored")
+    } else {
+        (Class::Correlation, "a tagged value the recording device wrote")
+    };
+    (class, format!("{label} ({name})"))
+}
+
+/// What a leaf means: either its four-byte type, or, inside a `keys`-indexed
+/// `ilst`, whatever `keys` says its number stands for.
+fn resolve_leaf(keys: &[KeyTable], b: &Box_) -> Option<(Class, String, String)> {
+    if let Some(name) = key_name(keys, b) {
+        let (class, label) = apple_key_info(&name);
+        return Some((class, format!("mp4:key:{name}"), label));
+    }
+    let (class, label) = leaf_info(&b.kind)?;
+    Some((class, format!("mp4:{}", b.name()), label.to_string()))
 }
 
 /// Text in a `udta` leaf, past its language or `data` wrapper.
@@ -221,10 +382,8 @@ impl Handler for Mp4 {
     }
 
     fn inspect(&self, data: &[u8]) -> Result<Inspection> {
-        let tree = root(data);
-        if tree.children.is_empty() {
-            return Err(Error::malformed(FormatId::Mp4, "no boxes"));
-        }
+        let tree = checked_tree(data)?;
+        let keys = key_tables(data, &tree);
         let mut ins = Inspection::new(FormatId::Mp4, data.len() as u64);
 
         for b in tree.descendants() {
@@ -240,8 +399,18 @@ impl Handler for Mp4 {
             if &b.kind == b"\xa9xyz" {
                 ins.mark("mp4:xyz");
             }
-            if let Some((class, label)) = leaf_info(&b.kind) {
-                let mut f = Finding::new(class, format!("mp4:{}", b.name()), label);
+            if &b.kind == b"keys" {
+                ins.findings.push(
+                    Finding::new(
+                        Class::Correlation,
+                        "mp4:keys",
+                        "the dictionary naming every field the recorder wrote",
+                    )
+                    .value(format!("{} keys", key_names(data, b).len())),
+                );
+            }
+            if let Some((class, locator, label)) = resolve_leaf(&keys, b) {
+                let mut f = Finding::new(class, locator, label);
                 if let Some(text) = leaf_text(data, b) {
                     f = f.value(text);
                 } else {
@@ -271,10 +440,8 @@ impl Handler for Mp4 {
     }
 
     fn clean(&self, data: &[u8], profile: &Profile) -> Result<Outcome> {
-        let tree = root(data);
-        if tree.children.is_empty() {
-            return Err(Error::malformed(FormatId::Mp4, "no boxes"));
-        }
+        let tree = checked_tree(data)?;
+        let keys = key_tables(data, &tree);
         let mut changes = Vec::new();
         if profile.inert() {
             return Ok(Outcome::unchanged(data));
@@ -285,43 +452,43 @@ impl Handler for Mp4 {
         // leaves behind.
         let mut doomed: Vec<(usize, usize)> = Vec::new();
         for b in tree.descendants() {
+            // Anything already going with its parent is neither reported twice
+            // nor removed twice; `meta` holding an `ilst` is the common case.
+            if inside_any(&doomed, b.at) {
+                continue;
+            }
             if matches!(&b.kind, b"udta" | b"ilst" | b"meta") {
                 let named: Vec<&Box_> = b
                     .descendants()
                     .into_iter()
-                    .filter(|c| leaf_info(&c.kind).is_some())
+                    .filter(|c| resolve_leaf(&keys, c).is_some())
                     .collect();
                 let all_doomed = !named.is_empty()
                     && named.iter().all(|c| {
-                        blend_leaf(&c.kind, profile)
-                            || leaf_info(&c.kind).is_some_and(|(class, _)| profile.alters(class))
+                        blend_leaf(&keys, c, profile)
+                            || resolve_leaf(&keys, c).is_some_and(|(class, ..)| profile.alters(class))
                     });
                 if all_doomed {
                     for c in named {
-                        let (class, label) = leaf_info(&c.kind).unwrap();
+                        let (class, locator, label) = resolve_leaf(&keys, c).unwrap();
                         // A field the profile would have kept still has to say
                         // why it went, even when its whole container went too.
-                        let label = if blend_leaf(&c.kind, profile) && !profile.alters(class) {
+                        let label = if blend_leaf(&keys, c, profile) && !profile.alters(class) {
                             format!("{label} (removed to match common tools: {WHY_UDTA_DATE})")
                         } else {
-                            label.to_string()
+                            label
                         };
-                        changes.push(Change::removed(
-                            class,
-                            format!("mp4:{}", c.name()),
-                            label,
-                            leaf_text(data, c),
-                        ));
+                        changes.push(Change::removed(class, locator, label, leaf_text(data, c)));
                     }
                     doomed.push((b.at, b.end()));
                     continue;
                 }
             }
-            if let Some((class, label)) = leaf_info(&b.kind) {
-                if blend_leaf(&b.kind, profile) && !inside_any(&doomed, b.at) {
+            if let Some((class, locator, label)) = resolve_leaf(&keys, b) {
+                if blend_leaf(&keys, b, profile) {
                     changes.push(Change::rewritten(
                         class,
-                        format!("mp4:{}", b.name()),
+                        locator,
                         format!("{label} (removed to match common tools: {WHY_UDTA_DATE})"),
                         Action::Remove,
                         leaf_text(data, b),
@@ -330,15 +497,24 @@ impl Handler for Mp4 {
                     doomed.push((b.at, b.end()));
                     continue;
                 }
-                if profile.alters(class) && !inside_any(&doomed, b.at) {
-                    changes.push(Change::removed(
-                        class,
-                        format!("mp4:{}", b.name()),
-                        label,
-                        leaf_text(data, b),
-                    ));
+                if profile.alters(class) {
+                    changes.push(Change::removed(class, locator, label, leaf_text(data, b)));
                     doomed.push((b.at, b.end()));
                 }
+            }
+        }
+        // A `keys` dictionary left on its own still names every field the
+        // recorder wrote, so it goes when the values it indexes go.
+        for t in &keys {
+            if !t.names.is_empty() && inside_any(&doomed, t.ilst.0) && !inside_any(&doomed, t.keys.0)
+            {
+                changes.push(Change::removed(
+                    Class::Correlation,
+                    "mp4:keys",
+                    "the dictionary naming every field the recorder wrote",
+                    Some(format!("{} keys", t.names.len())),
+                ));
+                doomed.push(t.keys);
             }
         }
         doomed.sort_unstable();
@@ -396,8 +572,10 @@ const WHY_UDTA_DATE: &str = "a date in a user-data box is written by handsets, n
 /// A date in `udta` goes even where the profile keeps the time class, because
 /// its presence rather than its value is what identifies the recorder. The
 /// header times, which every file has, are left to the profile.
-fn blend_leaf(kind: &[u8; 4], profile: &Profile) -> bool {
-    matches!(kind, b"\xa9dat" | b"date") && profile.may_blend(false)
+fn blend_leaf(keys: &[KeyTable], b: &Box_, profile: &Profile) -> bool {
+    let date = matches!(&b.kind, b"\xa9dat" | b"\xa9day" | b"date")
+        || key_name(keys, b).is_some_and(|n| n.to_ascii_lowercase().contains("creationdate"));
+    date && profile.may_blend(false)
 }
 
 fn inside_any(ranges: &[(usize, usize)], at: usize) -> bool {
@@ -693,6 +871,127 @@ mod tests {
     fn inspect_only_returns_the_bytes_untouched() {
         let data = clip_moov_first();
         assert_eq!(Mp4.clean(&data, &Profile::inspect_only()).unwrap().data, data);
+    }
+
+    /// `moov` last is what a phone writes, and what an interrupted copy loses
+    /// first: the file still parses, with the metadata-bearing box simply
+    /// absent from the tree.
+    fn clip_moov_last() -> Vec<u8> {
+        let mut udta = udta_leaf(b"\xa9mak", "Apple");
+        udta.extend_from_slice(&udta_leaf(b"\xa9mod", "iPhone 14 Pro"));
+        udta.extend_from_slice(&udta_leaf(b"\xa9xyz", "+50.0755+014.4378/"));
+        let mut moov_body =
+            mvhd(Civil { year: 2024, month: 6, day: 14, hour: 19, minute: 42, second: 7 });
+        moov_body.extend_from_slice(&box_bytes(b"udta", &udta));
+
+        let mut out = box_bytes(b"ftyp", b"isom\0\0\x02\0isomiso2");
+        out.extend_from_slice(&box_bytes(b"mdat", b"\x01\x02\x03\x04frames go here"));
+        out.extend_from_slice(&box_bytes(b"moov", &moov_body));
+        out
+    }
+
+    /// An `ilst` entry wraps its value in a `data` box: a well-known type, a
+    /// locale, then the bytes.
+    fn itunes_leaf(kind: &[u8; 4], text: &str) -> Vec<u8> {
+        let mut body = 1u32.to_be_bytes().to_vec();
+        body.extend_from_slice(&0u32.to_be_bytes());
+        body.extend_from_slice(text.as_bytes());
+        box_bytes(kind, &box_bytes(b"data", &body))
+    }
+
+    fn keys_box(names: &[&str]) -> Vec<u8> {
+        let mut body = vec![0u8; 4];
+        body.extend_from_slice(&(names.len() as u32).to_be_bytes());
+        for n in names {
+            body.extend_from_slice(&((n.len() + 8) as u32).to_be_bytes());
+            body.extend_from_slice(b"mdta");
+            body.extend_from_slice(n.as_bytes());
+        }
+        box_bytes(b"keys", &body)
+    }
+
+    /// A `.mov`'s `moov/meta`, which has no version and flags word.
+    fn quicktime_meta_clip(meta_children: &[u8]) -> Vec<u8> {
+        let mut moov_body =
+            mvhd(Civil { year: 2024, month: 6, day: 14, hour: 19, minute: 42, second: 7 });
+        moov_body.extend_from_slice(&box_bytes(b"meta", meta_children));
+        let mut data = box_bytes(b"ftyp", b"qt  \0\0\x02\0qt  qt  ");
+        data.extend_from_slice(&box_bytes(b"moov", &moov_body));
+        data
+    }
+
+    fn values(ins: &Inspection, class: Class) -> Vec<String> {
+        ins.in_class(class).filter_map(|f| f.value.clone()).collect()
+    }
+
+    /// A copy that stopped a few bytes short used to inspect as a two-field
+    /// file, clean to "nothing changed" and verify as clean, while the
+    /// original still held the make, the model and the place.
+    #[test]
+    fn a_clip_that_stops_short_is_refused_rather_than_reported_clean() {
+        let whole = clip_moov_last();
+        assert_eq!(values(&Mp4.inspect(&whole).unwrap(), Class::Device).len(), 2);
+
+        let short = &whole[..whole.len() - 15];
+        let err = Mp4.inspect(short).unwrap_err().to_string();
+        assert!(err.contains("incomplete"), "{err}");
+        assert!(Mp4.clean(short, &Profile::standard()).is_err());
+    }
+
+    /// QuickTime's `meta` has no version word. Assuming it does shifts every
+    /// child four bytes, and the whole box reads as empty.
+    #[test]
+    fn a_quicktime_meta_is_read_even_without_a_version_word() {
+        let mut children = box_bytes(b"hdlr", b"\0\0\0\0mdirappl\0\0\0\0\0\0\0\0\0");
+        let mut ilst = itunes_leaf(b"\xa9mak", "Apple");
+        ilst.extend_from_slice(&itunes_leaf(b"\xa9mod", "iPhone 14 Pro"));
+        ilst.extend_from_slice(&itunes_leaf(b"\xa9day", "2024-06-14T19:42:07+0200"));
+        children.extend_from_slice(&box_bytes(b"ilst", &ilst));
+        let data = quicktime_meta_clip(&children);
+
+        let ins = Mp4.inspect(&data).unwrap();
+        assert!(values(&ins, Class::Device).iter().any(|v| v == "iPhone 14 Pro"), "{ins:?}");
+        assert!(values(&ins, Class::Time).iter().any(|v| v.starts_with("2024-06-14T19:42:07+")));
+
+        let after = Mp4.inspect(&Mp4.clean(&data, &Profile::standard()).unwrap().data).unwrap();
+        assert!(after.in_class(Class::Device).next().is_none());
+    }
+
+    /// What a recent iPhone writes: `ilst` entries numbered rather than named,
+    /// with `keys` holding the name each number stands for.
+    #[test]
+    fn a_keys_indexed_ilst_is_read_and_removed_with_its_dictionary() {
+        let names = [
+            "com.apple.quicktime.location.ISO6709",
+            "com.apple.quicktime.make",
+            "com.apple.quicktime.model",
+            "com.apple.quicktime.creationdate",
+        ];
+        let values_in = ["+50.0755+014.4378/", "Apple", "iPhone 14 Pro", "2024-06-14T19:42:07+0200"];
+        let mut ilst = Vec::new();
+        for (i, v) in values_in.iter().enumerate() {
+            let kind = (i as u32 + 1).to_be_bytes();
+            ilst.extend_from_slice(&itunes_leaf(&kind, v));
+        }
+        let mut children = keys_box(&names);
+        children.extend_from_slice(&box_bytes(b"ilst", &ilst));
+        let data = quicktime_meta_clip(&children);
+
+        let ins = Mp4.inspect(&data).unwrap();
+        assert!(values(&ins, Class::Location).iter().any(|v| v.contains("+50.0755")), "{ins:?}");
+        assert!(values(&ins, Class::Device).iter().any(|v| v == "iPhone 14 Pro"));
+
+        let out = Mp4.clean(&data, &Profile::standard()).unwrap();
+        let after = Mp4.inspect(&out.data).unwrap();
+        assert!(after.in_class(Class::Location).next().is_none());
+        assert!(after.in_class(Class::Device).next().is_none());
+        assert!(after.in_class(Class::Time).next().is_some(), "the header time is not a key");
+
+        // Each change names the key it removed, so the report can say what went.
+        let locators: Vec<&str> = out.changes.iter().map(|c| c.locator.as_str()).collect();
+        assert!(locators.iter().any(|l| l.ends_with("quicktime.model")), "{locators:?}");
+        assert_eq!(locators.iter().filter(|l| l.contains("quicktime.model")).count(), 1);
+        assert!(!out.data.windows(4).any(|w| w == b"keys"), "the dictionary survived");
     }
 
     #[test]

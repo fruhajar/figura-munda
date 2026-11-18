@@ -8,6 +8,7 @@ first sketch of the inspect phase.
 import json
 import os
 import struct
+import subprocess
 import sys
 import zipfile
 import zlib
@@ -210,12 +211,78 @@ check("mvhd creation time is the declared instant (1904 epoch)",
       struct.unpack_from(">I", b, m + 8)[0] == 1718394127 + 2082844800,
       str(struct.unpack_from(">I", b, m + 8)[0]))
 # Atom surgery grew moov; if any size field were wrong the file would not demux.
-import subprocess
 r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                     "-of", "default=nw=1:nk=1", f"{OUT}/clip.mp4"],
                    capture_output=True, text=True)
 check("still demuxes after udta injection", r.returncode == 0
       and r.stdout.strip().startswith("1.0"), r.stdout.strip() or r.stderr.strip()[:60])
+
+print("\n== clip-ios.mov ==")
+b = open(f"{OUT}/clip-ios.mov", "rb").read()
+# The keys dictionary and a numbered ilst: the values carry no atom type, so
+# the names live only in `keys` and nothing but an index joins the two.
+ki = b.find(b"keys")
+check("keys dictionary present", ki > 0)
+n_keys = struct.unpack_from(">I", b, ki + 8)[0] if ki > 0 else 0
+check("keys declares its entry count", 1 <= n_keys <= 32, str(n_keys))
+names = []
+if ki > 0:
+    at = ki + 12
+    for _ in range(n_keys):
+        sz = struct.unpack_from(">I", b, at)[0]
+        if sz < 8:
+            break
+        names.append(b[at + 8:at + sz].decode("utf-8", "replace"))
+        at += sz
+check("the dictionary names the device keys",
+      "com.apple.quicktime.make" in names and "com.apple.quicktime.model" in names,
+      ", ".join(names))
+check("the dictionary names the location key",
+      "com.apple.quicktime.location.ISO6709" in names)
+check("the dictionary names the per-device signature",
+      "com.apple.photos.originating.signature" in names)
+# The first child of `ilst` begins four bytes past the type: its own type is
+# a key index rather than four printable characters.
+li = b.find(b"ilst", ki)
+check("ilst entries are numbered, not named",
+      li > 0 and struct.unpack_from(">I", b, li + 8)[0] in range(1, n_keys + 1),
+      str(struct.unpack_from(">I", b, li + 8)[0]) if li > 0 else "no ilst")
+check("the values are in the file", b"+50.0755+014.4378/" in b
+      and b"iPhone 14 Pro" in b
+      and b"9F2C14D8-7A5B-4E10-8C33-0B6E1D5A77C4" in b)
+r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format_tags",
+                    "-of", "default=nw=1", f"{OUT}/clip-ios.mov"],
+                   capture_output=True, text=True)
+check("ffprobe reads the apple keys back", r.returncode == 0
+      and "com.apple.quicktime.model=iPhone 14 Pro" in r.stdout,
+      r.stdout.strip().replace("\n", "; ")[:90] or r.stderr.strip()[:60])
+
+print("\n== clip-truncated.mp4 ==")
+t = open(f"{OUT}/clip-truncated.mp4", "rb").read()
+check("shorter than the clip it came from", len(t) == len(open(f"{OUT}/clip.mp4", "rb").read()) - 15,
+      f"{len(t)} bytes")
+# The declared point of this fixture: the fields are still there, and the box
+# chain does not reach them.
+check("the declared fields are still in the bytes", b"iPhone 14 Pro" in t
+      and b"+50.0755+014.4378/" in t and b"Marie Dvorakova" in t)
+at, covered = 0, True
+while at + 8 <= len(t):
+    sz = struct.unpack_from(">I", t, at)[0]
+    if sz < 8 or at + sz > len(t):
+        covered = False
+        break
+    at += sz
+check("the top-level box chain does not cover the file", not covered or at != len(t),
+      f"stops at {at} of {len(t)}")
+# And this is why a field count on this file is a lie rather than a shortfall:
+# a tolerant reader still hands out every one of the declared values.
+r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format_tags",
+                    "-of", "default=nw=1", f"{OUT}/clip-truncated.mp4"],
+                   capture_output=True, text=True)
+check("an independent reader still sees the declared fields",
+      "iPhone 14 Pro" in r.stdout and "+50.0755+014.4378/" in r.stdout
+      and "Marie Dvorakova" in r.stdout,
+      r.stdout.strip().replace("\n", "; ")[:80] or r.stderr.strip()[:60])
 
 print("\n== filesystem ==")
 st = os.stat(f"{OUT}/photo-phone.jpg")

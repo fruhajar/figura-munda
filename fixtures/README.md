@@ -35,6 +35,8 @@ rejects. The Rust test suite runs it over every cleaned fixture.
 | `letter.docx` | identity, time, correlation, history, hidden payload, structural fingerprint |
 | `diagram.svg` | identity, device, time, correlation, hidden payload |
 | `clip.mp4` | identity, device, location, time |
+| `clip-ios.mov` | device, location, time, correlation, all of it named only by a `keys` dictionary |
+| `clip-truncated.mp4` | an interrupted copy: every field still in the bytes, unreachable, and `ffprobe` still hands them out |
 | (all of them) | filesystem: pinned mtime, xattr, Zone.Identifier stand-in |
 
 That covers all ten classes in the root README.

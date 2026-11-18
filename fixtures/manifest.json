@@ -12,6 +12,49 @@
         "xattr_set": true
       }
     },
+    "clip-ios.mov": {
+      "classes": {
+        "correlation": [
+          "com.apple.photos.originating.signature=9F2C14D8-7A5B-4E10-8C33-0B6E1D5A77C4",
+          "the keys dictionary itself, which names every field the recorder wrote even once the values are gone"
+        ],
+        "device": [
+          "com.apple.quicktime.make=Apple",
+          "com.apple.quicktime.model=iPhone 14 Pro",
+          "com.apple.quicktime.software=17.4.1",
+          "ilst encoder=Lavf... string"
+        ],
+        "location": [
+          "moov/meta keys com.apple.quicktime.location.ISO6709 = +50.0755+014.4378/, value in a numbered ilst entry"
+        ],
+        "time": [
+          "com.apple.quicktime.creationdate=2024-06-14T19:42:07+0200",
+          "mvhd creation_time"
+        ]
+      },
+      "observed": {
+        "keys_box": true,
+        "total_bytes": 7019
+      }
+    },
+    "clip-truncated.mp4": {
+      "classes": {
+        "_contract": "An interrupted copy: moov is cut short, so the declared fields are in the bytes and no parser reaches them. The only honest answers are a refusal on inspect and a refusal on clean. A field count here, or a clean that reports nothing changed, is a false clean on a file that still holds everything.",
+        "device": [
+          "clip.mp4's \\xa9mak and \\xa9mod, present but unreachable"
+        ],
+        "identity": [
+          "clip.mp4's ilst artist and comment, present but unreachable"
+        ],
+        "location": [
+          "clip.mp4's \\xa9xyz and loci bytes, present but unreachable"
+        ]
+      },
+      "observed": {
+        "bytes_missing": 15,
+        "total_bytes": 6700
+      }
+    },
     "clip.mp4": {
       "classes": {
         "device": [

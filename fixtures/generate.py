@@ -21,6 +21,9 @@ import exifbuild as E
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "out"
 
+# A stable per-device handle, the kind that correlates files without naming anyone.
+MOV_SIGNATURE = "9F2C14D8-7A5B-4E10-8C33-0B6E1D5A77C4"
+
 # A real phone photo's worth of plausible values. Prague, so the GPS class has a
 # recognisable target when someone eyeballs a report.
 LAT = (50, 4, 31.8)
@@ -507,6 +510,41 @@ def make_mp4(path):
             "mvhd_created_1904_epoch": 1718394127 + 2082844800}
 
 
+def make_mov_ios(path):
+    """A `.mov` carrying iOS-style metadata.
+
+    `-movflags use_metadata_tags` makes ffmpeg write a `keys` dictionary and a
+    numbered `ilst`, which is the form a recent iPhone uses: the values carry
+    no four-byte type of their own, so a handler that only knows atom types
+    finds nothing at all here. QuickTime's `meta` also has no version word,
+    unlike the ISO one, which is the second way to miss the whole box.
+    """
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+         "-i", "testsrc=s=160x120:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+         "-movflags", "use_metadata_tags",
+         "-metadata", "com.apple.quicktime.make=Apple",
+         "-metadata", "com.apple.quicktime.model=iPhone 14 Pro",
+         "-metadata", "com.apple.quicktime.software=17.4.1",
+         "-metadata", "com.apple.quicktime.location.ISO6709=+50.0755+014.4378/",
+         "-metadata", "com.apple.quicktime.creationdate=2024-06-14T19:42:07+0200",
+         "-metadata", "com.apple.photos.originating.signature=" + MOV_SIGNATURE,
+         path],
+        check=True, capture_output=True)
+    data = open(path, "rb").read()
+    assert b"keys" in data and b"mdta" in data, "ffmpeg did not write a keys dictionary"
+    return {"total_bytes": len(data), "keys_box": True}
+
+
+def make_mp4_truncated(src, path, missing=15):
+    """`clip.mp4` with its last bytes gone, which is what an interrupted copy
+    looks like. `moov` is last, so the box holding every field is the one cut
+    short: the atoms are still in the bytes and no parser reaches them."""
+    data = open(src, "rb").read()[:-missing]
+    open(path, "wb").write(data)
+    return {"total_bytes": len(data), "bytes_missing": missing}
+
+
 # --------------------------------------------------------------------------- #
 
 DECLARED = {
@@ -585,6 +623,29 @@ DECLARED = {
         "time": ["mvhd creation_time=3801238927 (seconds since 1904-01-01, binary)",
                  "moov/udta \\xa9dat=2024-06-14T19:42:07Z"],
     },
+    "clip-ios.mov": {
+        "location": ["moov/meta keys com.apple.quicktime.location.ISO6709 "
+                     "= +50.0755+014.4378/, value in a numbered ilst entry"],
+        "device": ["com.apple.quicktime.make=Apple",
+                   "com.apple.quicktime.model=iPhone 14 Pro",
+                   "com.apple.quicktime.software=17.4.1",
+                   "ilst encoder=Lavf... string"],
+        "time": ["com.apple.quicktime.creationdate=2024-06-14T19:42:07+0200",
+                 "mvhd creation_time"],
+        "correlation": ["com.apple.photos.originating.signature=" + MOV_SIGNATURE,
+                        "the keys dictionary itself, which names every field the "
+                        "recorder wrote even once the values are gone"],
+    },
+    "clip-truncated.mp4": {
+        "location": ["clip.mp4's \\xa9xyz and loci bytes, present but unreachable"],
+        "device": ["clip.mp4's \\xa9mak and \\xa9mod, present but unreachable"],
+        "identity": ["clip.mp4's ilst artist and comment, present but unreachable"],
+        "_contract": "An interrupted copy: moov is cut short, so the declared fields "
+                     "are in the bytes and no parser reaches them. The only honest "
+                     "answers are a refusal on inspect and a refusal on clean. A field "
+                     "count here, or a clean that reports nothing changed, is a false "
+                     "clean on a file that still holds everything.",
+    },
     "_filesystem": {
         "filesystem": ["mtime and atime set to 2024-06-14 19:42:07 UTC on every fixture",
                        "user.figmun.test xattr on photo-phone.jpg",
@@ -607,6 +668,9 @@ def main():
     facts["letter.docx"] = make_docx(f"{OUT}/letter.docx", thumb)
     facts["diagram.svg"] = make_svg(f"{OUT}/diagram.svg")
     facts["clip.mp4"] = make_mp4(f"{OUT}/clip.mp4")
+    facts["clip-ios.mov"] = make_mov_ios(f"{OUT}/clip-ios.mov")
+    facts["clip-truncated.mp4"] = make_mp4_truncated(
+        f"{OUT}/clip.mp4", f"{OUT}/clip-truncated.mp4")
 
     # Filesystem layer.
     open(f"{OUT}/photo-phone.jpg.Identifier", "w").write(
@@ -630,7 +694,7 @@ def main():
         json.dump(man, fh, indent=2, sort_keys=True)
 
     for name in sorted(f for f in DECLARED if not f.startswith("_")):
-        cls = ", ".join(sorted(DECLARED[name]))
+        cls = ", ".join(sorted(k for k in DECLARED[name] if not k.startswith("_")))
         print(f"  {name:26} {facts[name]['total_bytes']:>7} B   {cls}")
     print(f"\n  manifest.json written, {len(DECLARED)} entries")
 
