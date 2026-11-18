@@ -450,6 +450,29 @@ fn a_signed_pdf_is_refused_and_says_why() {
     }
 }
 
+/// Read with the OOXML part names, an ODF package has no properties at all,
+/// which in a report is indistinguishable from a document that has none. The
+/// fixture declares six identity fields, a generator, three dates, the editing
+/// history, a deleted figure with its author and a first-page preview, none of
+/// which this engine reads yet. So the contract is a refusal naming the
+/// format, on inspect and on clean.
+#[test]
+fn an_opendocument_file_is_refused_by_name_rather_than_reported_clean() {
+    let (path, data) = fixture_or_skip!("report.odt");
+    let ins = inspect_bytes(&data, ext(&path).as_deref()).unwrap();
+    assert_eq!(ins.format, FormatId::Opendocument);
+    assert!(ins.refused(), "an ODF package was inspected as an Office document");
+    assert!(ins.blockers[0].reason.contains("OpenDocument"), "{:?}", ins.blockers[0]);
+    assert!(ins.blockers[0].detail.contains("meta.xml"), "{:?}", ins.blockers[0]);
+    assert!(ins.findings.is_empty(), "a field count on ODF overstates what was read");
+
+    match clean_bytes(&data, ext(&path).as_deref(), &Profile::standard()) {
+        Err(fm_core::Error::Refused(why)) => assert!(why.contains("OpenDocument"), "{why}"),
+        Err(e) => panic!("expected a refusal, got the error {e}"),
+        Ok(_) => panic!("an ODF package was cleaned, leaving every declared field in it"),
+    }
+}
+
 #[test]
 fn every_fixture_is_either_cleaned_verifiably_or_refused_with_a_reason() {
     let names = [
@@ -460,6 +483,7 @@ fn every_fixture_is_either_cleaned_verifiably_or_refused_with_a_reason() {
         "report-redacted.pdf",
         "report-incremental.pdf",
         "signed.pdf",
+        "report.odt",
         "clip.mp4",
         "clip-ios.mov",
         "clip-truncated.mp4",
@@ -479,7 +503,10 @@ fn every_fixture_is_either_cleaned_verifiably_or_refused_with_a_reason() {
                 ),
                 Err(fm_core::Error::Refused(why)) => {
                     assert!(!why.is_empty(), "{name} refused with no reason");
-                    assert_eq!(name, "signed.pdf", "{name} was refused unexpectedly: {why}");
+                    assert!(
+                        name == "signed.pdf" || name == "report.odt",
+                        "{name} was refused unexpectedly: {why}"
+                    );
                 }
                 // An incomplete copy is the one case where refusing to answer
                 // is the answer: see the fixture's declared contract.

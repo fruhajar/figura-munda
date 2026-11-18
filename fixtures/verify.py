@@ -178,6 +178,36 @@ check("member order is Word-like, not alphabetical",
       [i.filename for i in z.infolist()][:3]
       == ["[Content_Types].xml", "_rels/.rels", "word/document.xml"])
 
+print("\n== report.odt ==")
+z = zipfile.ZipFile(f"{OUT}/report.odt")
+infos = z.infolist()
+# How a reader identifies an ODF package without unpacking it, and the reason
+# rewriting this container is not the OOXML path with other part names.
+check("mimetype is the first member", infos[0].filename == "mimetype", infos[0].filename)
+check("mimetype is stored, not deflated",
+      infos[0].compress_type == zipfile.ZIP_STORED, str(infos[0].compress_type))
+check("mimetype declares an OpenDocument text",
+      z.read("mimetype") == b"application/vnd.oasis.opendocument.text")
+meta = z.read("meta.xml").decode()
+check("meta.xml names both authors", "<meta:initial-creator>Marie Dvorakova" in meta
+      and "<dc:creator>Petr Novak" in meta)
+check("meta.xml records the generator", "LibreOffice/7.6.4.1" in meta)
+check("meta.xml records the editing history",
+      "<meta:editing-cycles>14" in meta and "PT41H11M" in meta)
+check("meta.xml carries a matter number", "SEV-2024-0188" in meta)
+check("settings.xml names the printer", "HP-LaserJet-M404-PRAHA-4F" in
+      z.read("settings.xml").decode())
+content = z.read("content.xml").decode()
+check("content.xml keeps the deleted figure and its author",
+      "CZK 1,950,000" in content and "<dc:creator>Petr Novak" in content)
+check("content.xml carries an annotation naming someone", "Marie Dvorakova" in content)
+check("a first-page preview is in the package",
+      "Thumbnails/thumbnail.png" in z.namelist())
+# None of these part names exist in OOXML: read with the OOXML vocabulary the
+# package has no properties at all, which is why the engine must refuse it.
+check("no part name overlaps the OOXML set",
+      not any(n.startswith("docProps/") or n == "[Content_Types].xml" for n in z.namelist()))
+
 print("\n== diagram.svg ==")
 s = open(f"{OUT}/diagram.svg").read()
 check("inkscape version + sodipodi docname present",

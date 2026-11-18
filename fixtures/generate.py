@@ -425,6 +425,92 @@ def make_docx(path, thumb):
             "member_order": [m[0] for m in members] + ["docProps/thumbnail.jpeg"]}
 
 
+ODF_META = f"""<?xml version="1.0" encoding="UTF-8"?>
+<office:document-meta
+ xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+ xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0"
+ xmlns:dc="http://purl.org/dc/elements/1.1/">
+ <office:meta>
+  <meta:initial-creator>{AUTHOR}</meta:initial-creator>
+  <dc:creator>Petr Novak</dc:creator>
+  <meta:creation-date>2024-05-02T08:11:00</meta:creation-date>
+  <dc:date>2024-06-15T10:02:00</dc:date>
+  <meta:print-date>2024-06-13T16:40:00</meta:print-date>
+  <meta:printed-by>Jan Prochazka</meta:printed-by>
+  <meta:generator>LibreOffice/7.6.4.1$Linux_X86_64 LibreOffice_project/</meta:generator>
+  <meta:editing-cycles>14</meta:editing-cycles>
+  <meta:editing-duration>PT41H11M</meta:editing-duration>
+  <dc:title>Severin settlement memo</dc:title>
+  <meta:user-defined meta:name="Matter">SEV-2024-0188</meta:user-defined>
+  <meta:document-statistic meta:page-count="3" meta:word-count="914"/>
+ </office:meta>
+</office:document-meta>
+"""
+
+# The printer a document was last sent to names the office it was written in.
+ODF_SETTINGS = """<?xml version="1.0" encoding="UTF-8"?>
+<office:document-settings
+ xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+ xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0">
+ <office:settings><config:config-item-set config:name="ooo:view-settings">
+  <config:config-item config:name="PrinterName" config:type="string">\
+HP-LaserJet-M404-PRAHA-4F</config:config-item>
+ </config:config-item-set></office:settings>
+</office:document-settings>
+"""
+
+ODF_CONTENT = """<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content
+ xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+ xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+ xmlns:dc="http://purl.org/dc/elements/1.1/">
+ <office:body><office:text>
+  <text:tracked-changes><text:changed-region text:id="ct1"><text:deletion>
+   <office:change-info><dc:creator>Petr Novak</dc:creator>
+    <dc:date>2024-06-15T10:00:00</dc:date></office:change-info>
+   <text:p>CZK 1,950,000</text:p>
+  </text:deletion></text:changed-region></text:tracked-changes>
+  <text:p>Settlement of CZK 1,200,000.</text:p>
+  <office:annotation><dc:creator>Marie Dvorakova</dc:creator>
+   <text:p>check this with legal</text:p></office:annotation>
+ </office:text></office:body>
+</office:document-content>
+"""
+
+ODF_MANIFEST = """<?xml version="1.0" encoding="UTF-8"?>
+<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">
+ <manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text"/>
+ <manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>
+ <manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>
+ <manifest:file-entry manifest:full-path="settings.xml" manifest:media-type="text/xml"/>
+ <manifest:file-entry manifest:full-path="Thumbnails/thumbnail.png" manifest:media-type="image/png"/>
+</manifest:manifest>
+"""
+
+
+def make_odt(path, thumb):
+    """An OpenDocument package, whose vocabulary the engine does not read.
+
+    `mimetype` has to come first and be stored rather than deflated, which is
+    how a reader identifies an ODF package without unpacking it, and is also
+    why rewriting this container is not just the OOXML path with other names.
+    """
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        zi = zipfile.ZipInfo("mimetype", date_time=ZIP_TS)
+        zi.compress_type = zipfile.ZIP_STORED
+        z.writestr(zi, "application/vnd.oasis.opendocument.text")
+        for name, data in [("META-INF/manifest.xml", ODF_MANIFEST),
+                           ("content.xml", ODF_CONTENT), ("meta.xml", ODF_META),
+                           ("settings.xml", ODF_SETTINGS)]:
+            zi = zipfile.ZipInfo(name, date_time=ZIP_TS)
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            z.writestr(zi, data)
+        zi = zipfile.ZipInfo("Thumbnails/thumbnail.png", date_time=ZIP_TS)
+        z.writestr(zi, thumb)
+    return {"total_bytes": os.path.getsize(path),
+            "mimetype_first_and_stored": True}
+
+
 # --------------------------------------------------------------------------- #
 # SVG and MP4
 # --------------------------------------------------------------------------- #
@@ -623,6 +709,23 @@ DECLARED = {
         "time": ["mvhd creation_time=3801238927 (seconds since 1904-01-01, binary)",
                  "moov/udta \\xa9dat=2024-06-14T19:42:07Z"],
     },
+    "report.odt": {
+        "identity": ["meta:initial-creator=" + AUTHOR, "dc:creator=Petr Novak",
+                     "meta:printed-by=Jan Prochazka", "dc:title",
+                     "meta:user-defined Matter=SEV-2024-0188",
+                     "settings.xml PrinterName=HP-LaserJet-M404-PRAHA-4F"],
+        "device": ["meta:generator=LibreOffice/7.6.4.1"],
+        "time": ["meta:creation-date", "dc:date", "meta:print-date"],
+        "history": ["meta:editing-cycles=14", "meta:editing-duration=PT41H11M",
+                    "text:tracked-changes keeping the deleted figure and its author",
+                    "office:annotation naming " + AUTHOR],
+        "hidden_payload": ["Thumbnails/thumbnail.png, a preview of the first page"],
+        "_contract": "The ODF vocabulary is not read yet, and reading this package with "
+                     "the OOXML part names finds no properties at all, which in a report "
+                     "is indistinguishable from a document that has none. So the contract "
+                     "is a refusal naming the format on inspect and on clean, not a field "
+                     "count and not a clean.",
+    },
     "clip-ios.mov": {
         "location": ["moov/meta keys com.apple.quicktime.location.ISO6709 "
                      "= +50.0755+014.4378/, value in a numbered ilst entry"],
@@ -666,6 +769,7 @@ def main():
     facts["report-incremental.pdf"] = make_pdf_incremental(f"{OUT}/report-incremental.pdf")
     facts["signed.pdf"] = make_pdf_signed(f"{OUT}/signed.pdf")
     facts["letter.docx"] = make_docx(f"{OUT}/letter.docx", thumb)
+    facts["report.odt"] = make_odt(f"{OUT}/report.odt", thumb)
     facts["diagram.svg"] = make_svg(f"{OUT}/diagram.svg")
     facts["clip.mp4"] = make_mp4(f"{OUT}/clip.mp4")
     facts["clip-ios.mov"] = make_mov_ios(f"{OUT}/clip-ios.mov")

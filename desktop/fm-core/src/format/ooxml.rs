@@ -10,8 +10,8 @@
 
 use super::zip::{self, Member};
 use super::{xmlfilter, Change, Handler, Outcome};
-use crate::error::Result;
-use crate::model::{Action, Class, Finding, FormatId, Impact, Inspection};
+use crate::error::{Error, Result};
+use crate::model::{Action, Blocker, Class, Finding, FormatId, Impact, Inspection};
 use crate::profile::{Blending, Profile, TimeOutcome};
 use crate::timeutil;
 
@@ -93,6 +93,34 @@ const HISTORY_DROP: &[&str] = &[
 
 fn is_rels(name: &str) -> bool {
     name.ends_with(".rels")
+}
+
+/// Whether this package is OpenDocument rather than OPC.
+///
+/// ODF declares itself in a `mimetype` member that an OPC package does not
+/// have. It shares the ZIP and the XML layers with OOXML and nothing else: the
+/// part names differ (`meta.xml`, not `docProps/core.xml`) and so does the
+/// whole vocabulary. Reading it with the OOXML part names finds no properties,
+/// which is indistinguishable in a report from a document that has none.
+fn odf_mimetype(members: &[Member]) -> Option<String> {
+    let m = members.iter().find(|m| m.name == "mimetype")?;
+    let declared = String::from_utf8_lossy(&m.data).trim().to_string();
+    declared.starts_with("application/vnd.oasis.opendocument").then_some(declared)
+}
+
+/// What to say instead of a field count. Spelled out because the alternative
+/// is a clean report on a file whose every field is still in it.
+fn odf_blocker(mimetype: &str) -> Blocker {
+    Blocker {
+        reason: "this is an OpenDocument file, which is not supported yet".to_string(),
+        detail: format!(
+            "It declares itself as {mimetype}. The metadata lives in meta.xml and \
+             settings.xml, in a vocabulary this tool does not read yet, so it cannot \
+             tell you what is in the file and will not touch it. Reporting it as clean \
+             is the one thing it must not do. Export to DOCX if it has to be cleaned \
+             today."
+        ),
+    }
 }
 
 fn text_of(xml: &[u8], qname: &str) -> Option<String> {
@@ -283,6 +311,11 @@ impl Handler for Ooxml {
 
     fn inspect(&self, data: &[u8]) -> Result<Inspection> {
         let members = zip::read(data)?;
+        if let Some(mimetype) = odf_mimetype(&members) {
+            let mut ins = Inspection::new(FormatId::Opendocument, data.len() as u64);
+            ins.blockers.push(odf_blocker(&mimetype));
+            return Ok(ins);
+        }
         let mut ins = Inspection::new(FormatId::Ooxml, data.len() as u64);
 
         for m in &members {
@@ -481,6 +514,10 @@ impl Handler for Ooxml {
 
     fn clean(&self, data: &[u8], profile: &Profile) -> Result<Outcome> {
         let mut members = zip::read(data)?;
+        if let Some(mimetype) = odf_mimetype(&members) {
+            let b = odf_blocker(&mimetype);
+            return Err(Error::Refused(format!("{}: {}", b.reason, b.detail)));
+        }
         let mut changes = Vec::new();
         if profile.inert() {
             return Ok(Outcome::unchanged(data));
@@ -756,6 +793,57 @@ mod tests {
             m.stamp(timeutil::Civil { year: 2019, month: 3, day: 14, hour: 9, minute: 26, second: 52 });
         }
         zip::write(&members)
+    }
+
+    /// A minimal ODF package: the `mimetype` member first and stored, then the
+    /// parts whose vocabulary this handler does not read.
+    fn odt() -> Vec<u8> {
+        let members = vec![
+            Member {
+                stored: true,
+                ..Member::new("mimetype", b"application/vnd.oasis.opendocument.text".to_vec())
+            },
+            Member::new(
+                "meta.xml",
+                br#"<office:document-meta xmlns:office="o" xmlns:meta="m" xmlns:dc="dc"><office:meta><meta:initial-creator>Marie Dvorakova</meta:initial-creator><dc:creator>Petr Novak</dc:creator><meta:creation-date>2024-05-02T08:11:00</meta:creation-date><meta:generator>LibreOffice/7.6.4.1</meta:generator><meta:editing-cycles>14</meta:editing-cycles><meta:editing-duration>PT41H11M</meta:editing-duration></office:meta></office:document-meta>"#.to_vec(),
+            ),
+            Member::new("content.xml", b"<office:document-content/>".to_vec()),
+        ];
+        zip::write(&members)
+    }
+
+    /// Read with the OOXML part names an ODF package has no properties at all,
+    /// which in a report is indistinguishable from a document that has none.
+    /// Until the vocabulary is read, the only honest answer is to say so.
+    #[test]
+    fn an_opendocument_package_is_refused_rather_than_reported_clean() {
+        let data = odt();
+        let ins = Ooxml.inspect(&data).unwrap();
+        assert_eq!(ins.format, FormatId::Opendocument);
+        assert!(ins.refused(), "an ODF package was inspected as an Office document");
+        assert!(ins.blockers[0].detail.contains("meta.xml"), "{:?}", ins.blockers[0]);
+        assert!(ins.findings.is_empty(), "a field count on ODF overstates what was read");
+
+        match Ooxml.clean(&data, &Profile::standard()) {
+            Err(Error::Refused(why)) => assert!(why.contains("OpenDocument"), "{why}"),
+            Err(e) => panic!("expected a refusal, got {e}"),
+            Ok(_) => panic!("an ODF package was cleaned, leaving every field in it"),
+        }
+
+        // And the fields it did not read are still in the package, which is
+        // what the refusal is protecting against calling clean.
+        assert!(text_of_part(&data, "meta.xml").contains("Marie Dvorakova"));
+    }
+
+    /// The OPC path must not be reached through an ODF extension either.
+    #[test]
+    fn an_office_package_is_still_recognised_and_read() {
+        let data = docx();
+        assert!(Ooxml.sniff(&data, Some("docx")));
+        assert!(Ooxml.sniff(&odt(), Some("odt")), "ODF must still be recognised to be refused");
+        let ins = Ooxml.inspect(&data).unwrap();
+        assert_eq!(ins.format, FormatId::Ooxml);
+        assert!(!ins.refused());
     }
 
     fn text_of_part(data: &[u8], name: &str) -> String {

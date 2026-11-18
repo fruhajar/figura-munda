@@ -247,6 +247,40 @@
         "total_bytes": 2367
       }
     },
+    "report.odt": {
+      "classes": {
+        "_contract": "The ODF vocabulary is not read yet, and reading this package with the OOXML part names finds no properties at all, which in a report is indistinguishable from a document that has none. So the contract is a refusal naming the format on inspect and on clean, not a field count and not a clean.",
+        "device": [
+          "meta:generator=LibreOffice/7.6.4.1"
+        ],
+        "hidden_payload": [
+          "Thumbnails/thumbnail.png, a preview of the first page"
+        ],
+        "history": [
+          "meta:editing-cycles=14",
+          "meta:editing-duration=PT41H11M",
+          "text:tracked-changes keeping the deleted figure and its author",
+          "office:annotation naming Marie Dvorakova"
+        ],
+        "identity": [
+          "meta:initial-creator=Marie Dvorakova",
+          "dc:creator=Petr Novak",
+          "meta:printed-by=Jan Prochazka",
+          "dc:title",
+          "meta:user-defined Matter=SEV-2024-0188",
+          "settings.xml PrinterName=HP-LaserJet-M404-PRAHA-4F"
+        ],
+        "time": [
+          "meta:creation-date",
+          "dc:date",
+          "meta:print-date"
+        ]
+      },
+      "observed": {
+        "mimetype_first_and_stored": true,
+        "total_bytes": 7860
+      }
+    },
     "screenshot.png": {
       "classes": {
         "correlation": [
