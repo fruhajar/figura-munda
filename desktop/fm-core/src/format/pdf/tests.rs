@@ -199,6 +199,163 @@ fn an_author_written_in_utf_16_is_read_as_a_name() {
     assert!(Pdf.inspect(&out.data).unwrap().in_class(Class::Identity).next().is_none());
 }
 
+/// Counting the substring made any document whose own text mentions the
+/// keyword report an extra revision, and then fail verification forever,
+/// because flattening a revision that was never there cannot be done. This is
+/// the file the review found: an ordinary one-revision PDF.
+#[test]
+fn a_document_that_mentions_startxref_in_its_text_has_one_revision() {
+    let prose = "BT /F1 11 Tf 72 720 Td (The startxref keyword points at the table.) Tj ET\n";
+    let data = build(prose, Dictionary::new(), standard_info());
+
+    let ins = Pdf.inspect(&data).unwrap();
+    assert!(
+        ins.in_class(Class::History).next().is_none(),
+        "{:?}",
+        values(&ins, Class::History)
+    );
+
+    // And it cleans, which it could not before: the leftover was a revision
+    // that did not exist.
+    let out = Pdf.clean(&data, &Profile::standard()).unwrap();
+    let after = Pdf.inspect(&out.data).unwrap();
+    let v = Verification::after(&after, &Profile::standard(), &out.changes);
+    assert!(v.clean(), "{:?}", v.leftovers.iter().map(|f| &f.locator).collect::<Vec<_>>());
+    assert!(!out.changes.iter().any(|c| c.locator == "pdf:incremental"));
+    // The sentence itself is content and stays.
+    assert!(out.data.windows(9).any(|w| w == b"startxref"));
+}
+
+/// A PDF assembled by hand, with a classic cross-reference table, so that the
+/// bytes are exactly what is intended rather than what a writer chose.
+fn hand_built(objects: Vec<(u32, Vec<u8>)>) -> Vec<u8> {
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offsets: Vec<(u32, usize)> = Vec::new();
+    for (number, body) in &objects {
+        offsets.push((*number, out.len()));
+        out.extend_from_slice(format!("{number} 0 obj\n").as_bytes());
+        out.extend_from_slice(body);
+        out.extend_from_slice(b"\nendobj\n");
+    }
+    let xref_at = out.len();
+    out.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+    out.extend_from_slice(b"0000000000 65535 f \n");
+    for (_, at) in &offsets {
+        out.extend_from_slice(format!("{at:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    out
+}
+
+fn minimal_objects() -> Vec<(u32, Vec<u8>)> {
+    vec![
+        (1, b"<< /Type /Catalog /Pages 2 0 R >>".to_vec()),
+        (2, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec()),
+        (
+            3,
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>".to_vec(),
+        ),
+        (4, b"<< /Length 0 >>\nstream\n\nendstream".to_vec()),
+    ]
+}
+
+/// Twenty thousand nested arrays overflow the stack inside lopdf, which aborts
+/// the process: no report, no diff, and a folder run that stops where it
+/// stood. A stack overflow cannot be caught, so the depth is counted before
+/// the parser sees the file. If this regresses it will not fail, it will take
+/// the test binary down with it, which is the honest signal.
+#[test]
+fn a_file_nested_past_what_the_parser_survives_is_refused_before_it_is_parsed() {
+    let deep = format!("{}{}", "[".repeat(20000), "]".repeat(20000));
+    let mut objects = minimal_objects();
+    objects.push((5, format!("<< /Deep {deep} >>").into_bytes()));
+    let hostile = hand_built(objects);
+
+    match Pdf.inspect(&hostile) {
+        Err(crate::error::Error::Refused(why)) => {
+            assert!(why.contains("20000") || why.contains("20001"), "{why}");
+            assert!(why.contains("nest"), "{why}");
+        }
+        Err(e) => panic!("expected a refusal naming the depth, got {e}"),
+        Ok(_) => panic!("a file nested 20000 deep was parsed"),
+    }
+    assert!(Pdf.clean(&hostile, &Profile::standard()).is_err());
+
+    // The same file without the nesting is read normally, so it is the depth
+    // that is refused and not the way this one is assembled.
+    let ordinary = hand_built(minimal_objects());
+    assert!(Pdf.inspect(&ordinary).is_ok(), "a hand-built PDF was refused");
+}
+
+/// The depth scan reads syntax, not data: brackets inside a string, a hex
+/// string, a comment or a stream are none of its business. Counting them
+/// would refuse ordinary files.
+#[test]
+fn brackets_in_data_are_not_nesting() {
+    let content = "BT /F1 11 Tf 72 720 Td ([[[[[[[[ a drawing of brackets ]]]]]]]]) Tj ET\n";
+    let info = dictionary! {
+        "Title" => Object::string_literal("[[[[[[[[[[ ten of them ]]]]]]]]]]"),
+        "Keywords" => Object::String(vec![0x5b; 400], StringFormat::Hexadecimal),
+    };
+    let data = build(content, Dictionary::new(), info);
+    assert!(Pdf.inspect(&data).is_ok(), "an ordinary file was refused");
+    let out = Pdf.clean(&data, &Profile::standard()).unwrap();
+    assert!(Pdf.inspect(&out.data).is_ok());
+}
+
+/// Cleaning an encrypted document cannot work: the strings and streams are
+/// ciphertext, and the trailer identifier is an input to the key. It used to
+/// be inspected as an ordinary document and cleaned into a file no reader
+/// would open, with `/Encrypt` still in it.
+#[test]
+fn an_encrypted_document_is_refused_rather_than_rewritten() {
+    let mut doc = Document::with_version("1.7");
+    let pages_id = doc.new_object_id();
+    let content_id = doc.add_object(Stream::new(Dictionary::new(), b"BT ET\n".to_vec()));
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        "Contents" => content_id,
+    });
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages", "Kids" => vec![page_id.into()], "Count" => 1,
+        }),
+    );
+    let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    let encrypt_id = doc.add_object(dictionary! {
+        "Filter" => "Standard", "V" => 2, "R" => 3, "Length" => 128, "P" => -3904,
+        "O" => Object::String(vec![0x2d; 16], StringFormat::Hexadecimal),
+        "U" => Object::String(vec![0x9f; 16], StringFormat::Hexadecimal),
+    });
+    let info_id = doc.add_object(standard_info());
+    doc.trailer.set("Root", catalog_id);
+    doc.trailer.set("Info", info_id);
+    doc.trailer.set("Encrypt", encrypt_id);
+    let mut data = Vec::new();
+    doc.save_to(&mut data).unwrap();
+
+    let ins = Pdf.inspect(&data).unwrap();
+    assert!(ins.refused(), "an encrypted document was inspected as an ordinary one");
+    assert!(ins.blockers[0].reason.contains("encrypted"), "{:?}", ins.blockers[0]);
+    assert!(ins.blockers[0].detail.contains("Standard"), "{:?}", ins.blockers[0]);
+    // Nothing is reported out of it: whatever it holds is ciphertext.
+    assert!(ins.findings.is_empty(), "{:?}", ins.findings);
+
+    match Pdf.clean(&data, &Profile::standard()) {
+        Err(crate::error::Error::Refused(why)) => assert!(why.contains("encrypted"), "{why}"),
+        Err(e) => panic!("expected a refusal, got {e}"),
+        Ok(_) => panic!("an encrypted document was cleaned, which destroys it"),
+    }
+}
+
 fn values(ins: &Inspection, class: Class) -> String {
     ins.in_class(class).filter_map(|f| f.value.clone()).collect::<Vec<_>>().join(" | ")
 }

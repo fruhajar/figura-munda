@@ -34,6 +34,8 @@ rejects. The Rust test suite runs it over every cleaned fixture.
 | `report-redacted.pdf` | identity, device, time, correlation, **redaction integrity**, hidden payload |
 | `report-incremental.pdf` | history (prior revision fully recoverable) |
 | `signed.pdf` | never-remove (detect the signature and refuse) |
+| `encrypted.pdf` | never-remove (detect `/Encrypt` and refuse; cleaning destroys such a file) |
+| `nested.pdf` | hostile, not broken: 20000 matched nested arrays, structurally sound, refused by depth before parsing |
 | `letter.docx` | identity, time, correlation, history, hidden payload, structural fingerprint |
 | `diagram.svg` | identity, device, time, correlation, hidden payload |
 | `report.odt` | identity, device, time, history, hidden payload, none of it read yet: the declared contract is a refusal |

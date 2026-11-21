@@ -109,6 +109,21 @@
         "total_bytes": 1229
       }
     },
+    "encrypted.pdf": {
+      "classes": {
+        "_contract": "A refusal on inspect and on clean, with nothing reported out of the file, because whatever it holds is ciphertext.",
+        "identity": [
+          "/Author in the Info dict, which in a real encrypted file would be ciphertext rather than readable"
+        ],
+        "never_remove": [
+          "/Encrypt declaring the Standard handler, revision 3. The /O and /U strings are stubs, as in signed.pdf. Detect and refuse: the strings and streams are ciphertext and the trailer /ID is an input to the key, so any rewrite leaves a file nothing opens."
+        ]
+      },
+      "observed": {
+        "encrypt_object": 5,
+        "total_bytes": 1040
+      }
+    },
     "letter.docx": {
       "classes": {
         "correlation": [
@@ -154,6 +169,15 @@
           "docProps/thumbnail.jpeg"
         ],
         "total_bytes": 9284
+      }
+    },
+    "nested.pdf": {
+      "classes": {
+        "_contract": "Twenty thousand matched, correctly indexed nested arrays. Every bracket pairs and the xref is right, so this is hostile rather than broken: a recursive parser overflows its stack on it and the process aborts, which a folder run cannot survive. The contract is a refusal naming the depth, decided before the file is parsed."
+      },
+      "observed": {
+        "nesting_depth": 20000,
+        "total_bytes": 40471
       }
     },
     "photo-codepage.jpg": {

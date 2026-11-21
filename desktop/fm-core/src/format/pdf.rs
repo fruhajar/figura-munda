@@ -101,7 +101,144 @@ fn signature_in(doc: &Document) -> Option<String> {
 /// How many revisions the file holds. More than one means the earlier ones are
 /// still in the bytes.
 fn revision_count(data: &[u8]) -> usize {
-    data.windows(9).filter(|w| *w == b"startxref").count().max(1)
+    let mut count = 0usize;
+    for at in 0..data.len().saturating_sub(9) {
+        if &data[at..at + 9] != b"startxref" {
+            continue;
+        }
+        // A token, not a word inside one.
+        if at > 0 && !matches!(data[at - 1], b'\n' | b'\r' | b'\t' | b' ') {
+            continue;
+        }
+        // Followed by the offset of a cross-reference table. Prose that
+        // mentions the keyword is followed by more prose, and a linearized
+        // file's leading `startxref 0` is an artefact of linearization rather
+        // than a revision.
+        let mut p = at + 9;
+        while p < data.len() && matches!(data[p], b' ' | b'\t' | b'\r' | b'\n') {
+            p += 1;
+        }
+        let digits: Vec<u8> = data[p..].iter().copied().take_while(|b| b.is_ascii_digit()).collect();
+        if digits.is_empty() || digits.iter().all(|d| *d == b'0') {
+            continue;
+        }
+        count += 1;
+    }
+    count.max(1)
+}
+
+/// How deeply the arrays and dictionaries nest, as a lexical scan rather than
+/// a parse, because the parse is what cannot survive the answer.
+///
+/// lopdf descends recursively, so a file with twenty thousand nested arrays
+/// overflows the stack inside it: the process aborts with a core dump, which
+/// takes the report, the diff and the rest of a folder run with it. A stack
+/// overflow is not a panic and cannot be caught, so the depth has to be known
+/// before the parser sees the bytes. Strings, hex strings, comments and stream
+/// data are stepped over: a bracket in any of those is data, not structure.
+fn nesting_depth(data: &[u8]) -> usize {
+    let mut depth = 0usize;
+    let mut deepest = 0usize;
+    let mut at = 0usize;
+    while at < data.len() {
+        match data[at] {
+            b'%' => {
+                while at < data.len() && !matches!(data[at], b'\n' | b'\r') {
+                    at += 1;
+                }
+            }
+            b'(' => {
+                // A literal string: parentheses nest and a backslash escapes.
+                let mut open = 1usize;
+                at += 1;
+                while at < data.len() && open > 0 {
+                    match data[at] {
+                        b'\\' => at += 1,
+                        b'(' => open += 1,
+                        b')' => open -= 1,
+                        _ => {}
+                    }
+                    at += 1;
+                }
+                continue;
+            }
+            b'<' if data.get(at + 1) == Some(&b'<') => {
+                depth += 1;
+                deepest = deepest.max(depth);
+                at += 2;
+                continue;
+            }
+            b'>' if data.get(at + 1) == Some(&b'>') => {
+                depth = depth.saturating_sub(1);
+                at += 2;
+                continue;
+            }
+            b'<' => {
+                while at < data.len() && data[at] != b'>' {
+                    at += 1;
+                }
+            }
+            b'[' => {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+            b']' => depth = depth.saturating_sub(1),
+            b's' if data[at..].starts_with(b"stream")
+                && (at == 0 || !data[at - 1].is_ascii_alphanumeric()) =>
+            {
+                at = match data[at..].windows(9).position(|w| w == b"endstream") {
+                    Some(end) => at + end + 9,
+                    None => data.len(),
+                };
+                continue;
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    deepest
+}
+
+/// Past this, the file is refused rather than parsed. Ordinary documents nest
+/// a dozen deep; the hostile one that prompted the check nested twenty
+/// thousand.
+const NESTING_LIMIT: usize = 100;
+
+/// The guard that has to run before the parser does.
+fn too_deep(data: &[u8]) -> Option<String> {
+    let depth = nesting_depth(data);
+    (depth > NESTING_LIMIT).then(|| {
+        format!(
+            "its arrays and dictionaries nest {depth} deep, past the {NESTING_LIMIT} \
+             levels this will read. A file shaped like this overflows the stack inside \
+             the PDF parser, which aborts the whole run rather than failing one file, \
+             so it is not opened at all."
+        )
+    })
+}
+
+/// What the file says about its own encryption, if anything.
+///
+/// Cleaning an encrypted PDF cannot work and does not fail safely: the strings
+/// and streams are ciphertext, the trailer `/ID` is an input to the key, and
+/// rewriting either leaves a file no reader will open again. It used to be
+/// inspected as an ordinary document and cleaned into exactly that.
+fn encryption_in(doc: &Document) -> Option<String> {
+    let dict = match doc.trailer.get(b"Encrypt").ok()? {
+        Object::Reference(id) => match doc.get_object(*id) {
+            Ok(Object::Dictionary(d)) => d.clone(),
+            _ => return Some("an encryption dictionary this cannot read".to_string()),
+        },
+        Object::Dictionary(d) => d.clone(),
+        _ => return Some("an encryption entry of an unexpected kind".to_string()),
+    };
+    let handler = dict
+        .get(b"Filter")
+        .and_then(|o| o.as_name())
+        .map(crate::text::text)
+        .unwrap_or_else(|_| "an unnamed handler".to_string());
+    let revision = dict.get(b"R").and_then(|o| o.as_i64()).unwrap_or(0);
+    Some(format!("the {handler} security handler, revision {revision}"))
 }
 
 /// What a reader can recover from the superseded revision.
@@ -314,9 +451,28 @@ impl Handler for Pdf {
     }
 
     fn inspect(&self, data: &[u8]) -> Result<Inspection> {
+        if let Some(why) = too_deep(data) {
+            return Err(Error::Refused(why));
+        }
         let doc = Document::load_mem(data)
             .map_err(|e| Error::malformed(FormatId::Pdf, format!("{e}")))?;
         let mut ins = Inspection::new(FormatId::Pdf, data.len() as u64);
+
+        // An encrypted document is refused before anything is read out of it.
+        // Whatever strings it holds are ciphertext, so reporting them would be
+        // reporting noise, and cleaning it would destroy it.
+        if let Some(handler) = encryption_in(&doc) {
+            ins.blockers.push(Blocker {
+                reason: "the document is encrypted".to_string(),
+                detail: format!(
+                    "It declares {handler}. The text and the metadata in it are \
+                     ciphertext, and the trailer identifier is part of what the key is \
+                     derived from, so rewriting any of it leaves a file no reader will \
+                     open. Remove the encryption first if it has to be cleaned."
+                ),
+            });
+            return Ok(ins);
+        }
 
         if let Some(signer) = signature_in(&doc) {
             ins.blockers.push(Blocker {
@@ -542,11 +698,21 @@ impl Handler for Pdf {
     }
 
     fn clean(&self, data: &[u8], profile: &Profile) -> Result<Outcome> {
+        if let Some(why) = too_deep(data) {
+            return Err(Error::Refused(why));
+        }
         let mut doc = Document::load_mem(data)
             .map_err(|e| Error::malformed(FormatId::Pdf, format!("{e}")))?;
         if let Some(signer) = signature_in(&doc) {
             return Err(Error::Refused(format!(
                 "the document is signed by {signer}; any edit would invalidate the signature"
+            )));
+        }
+        if let Some(handler) = encryption_in(&doc) {
+            return Err(Error::Refused(format!(
+                "the document is encrypted with {handler}; its text and metadata are \
+                 ciphertext and the trailer identifier is part of the key, so cleaning it \
+                 would leave a file no reader will open"
             )));
         }
         if profile.inert() {

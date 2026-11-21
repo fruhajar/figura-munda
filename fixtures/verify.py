@@ -7,6 +7,7 @@ first sketch of the inspect phase.
 """
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -136,6 +137,34 @@ check("eXIf chunk present and is TIFF", chunks[b"eXIf"][0][:2] == b"II")
 check("iTXt carries XMP DocumentID", b"DocumentID" in chunks[b"iTXt"][0])
 check("IDAT decompresses to 32 rows",
       len(zlib.decompress(chunks[b"IDAT"][0])) == 32 * 33)
+
+print("\n== nested.pdf ==")
+b = open(f"{OUT}/nested.pdf", "rb").read()
+# Hostile, not broken: that distinction is the whole fixture.
+# The page and the page tree have ordinary arrays of their own, so what is
+# declared is the longest unbroken run rather than the total.
+longest = max((len(m) for m in re.findall(rb"\[+", b)), default=0)
+check("a run of twenty thousand opening brackets", longest == 20000, str(longest))
+check("every bracket is matched", b.count(b"[") == b.count(b"]"))
+check("the cross-reference table is correct",
+      all(b[int(m):int(m) + 7].split()[0].isdigit()
+          for m in [line.split()[0] for line in
+                    b[b.find(b"xref") + 5:b.find(b"trailer")].split(b"\n")[1:-1]
+                    if line.endswith(b"n ")]),
+      "offsets land on object headers")
+r = subprocess.run(["python3", "checkpdf.py", f"{OUT}/nested.pdf"], capture_output=True, text=True)
+check("an independent parser agrees the structure is sound", r.returncode == 0,
+      r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr.strip()[:60])
+
+print("\n== encrypted.pdf ==")
+b = open(f"{OUT}/encrypted.pdf", "rb").read()
+check("the trailer points at an encryption dictionary", b"/Encrypt 5 0 R" in b)
+check("it declares the standard handler, revision 3",
+      b"/Filter /Standard" in b and b"/R 3" in b)
+check("the owner and user strings are present (stubs, as in signed.pdf)",
+      b"/O <2d3b4c5a" in b and b"/U <9f2c41a0" in b)
+check("the trailer /ID, which is an input to the key, is there",
+      b"/ID [<9f2c41a055b14e7c9b306d1e2a77c004" in b)
 
 print("\n== photo-oriented.png ==")
 d = open(f"{OUT}/photo-oriented.png", "rb").read()

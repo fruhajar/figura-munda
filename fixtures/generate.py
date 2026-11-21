@@ -451,6 +451,55 @@ DRELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 ZIP_TS = (2019, 3, 14, 9, 26, 52)
 
 
+def make_pdf_nested(path, depth=20000):
+    """Arrays nested deep enough to overflow a recursive parser's stack.
+
+    Not malformed: every bracket is matched and the cross-reference table is
+    correct. That is the point. A parser that descends recursively dies on it,
+    and a stack overflow is not a panic, so the process aborts with a core dump
+    and takes the whole folder run with it. The engine has to decide this one
+    before parsing it, which means counting depth lexically.
+    """
+    nested = b"[" * depth + b"]" * depth
+    objs = {
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>",
+        4: b"<< /Length 0 >>\nstream\n\nendstream",
+        5: b"<< /Deep " + nested + b" >>",
+    }
+    data, _ = assemble_pdf(objs, b"", 1)
+    open(path, "wb").write(data)
+    return {"total_bytes": len(data), "nesting_depth": depth}
+
+
+def make_pdf_encrypted(path):
+    """A PDF declaring the standard security handler.
+
+    The /O and /U strings are stubs rather than real key material, as with
+    signed.pdf: what matters is that the file says it is encrypted. Cleaning it
+    cannot work, because the strings and streams of a real one are ciphertext
+    and the trailer /ID is an input to the key, so a rewrite leaves a file no
+    reader will open.
+    """
+    body = b"BT /F1 11 Tf 72 720 Td (Ciphertext in a real one.) Tj ET\n"
+    objs = {
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>",
+        4: b"<< /Length %d >>\nstream\n" % len(body) + body + b"endstream",
+        5: (b"<< /Filter /Standard /V 2 /R 3 /Length 128 /P -3904 "
+            b"/O <2d3b4c5a6e7f8091a2b3c4d5e6f70812> "
+            b"/U <9f2c41a055b14e7c9b306d1e2a77c004> >>"),
+        6: INFO,
+    }
+    ident = (b"/ID [<" + PDF_FILE_ID.encode() + b"> <" + PDF_FILE_ID.encode() + b">]"
+             b" /Info 6 0 R /Encrypt 5 0 R")
+    data, _ = assemble_pdf(objs, ident, 1)
+    open(path, "wb").write(data)
+    return {"total_bytes": len(data), "encrypt_object": 5}
+
+
 def make_docx(path, thumb):
     members = [
         ("[Content_Types].xml", CT), ("_rels/.rels", RELS),
@@ -785,6 +834,23 @@ DECLARED = {
                          "here is a stub, not real CAdES."],
         "identity": ["/Author", "/Sig /Name"],
     },
+    "nested.pdf": {
+        "_contract": "Twenty thousand matched, correctly indexed nested arrays. Every "
+                     "bracket pairs and the xref is right, so this is hostile rather than "
+                     "broken: a recursive parser overflows its stack on it and the process "
+                     "aborts, which a folder run cannot survive. The contract is a refusal "
+                     "naming the depth, decided before the file is parsed.",
+    },
+    "encrypted.pdf": {
+        "identity": ["/Author in the Info dict, which in a real encrypted file would be "
+                     "ciphertext rather than readable"],
+        "never_remove": ["/Encrypt declaring the Standard handler, revision 3. The /O and "
+                         "/U strings are stubs, as in signed.pdf. Detect and refuse: the "
+                         "strings and streams are ciphertext and the trailer /ID is an "
+                         "input to the key, so any rewrite leaves a file nothing opens."],
+        "_contract": "A refusal on inspect and on clean, with nothing reported out of the "
+                     "file, because whatever it holds is ciphertext.",
+    },
     "letter.docx": {
         "identity": ["dc:creator=" + AUTHOR, "cp:lastModifiedBy=Petr Novak",
                      "Company=Severin Holding a.s.", "Manager=Jan Prochazka",
@@ -882,6 +948,8 @@ def main():
     facts["report-redacted.pdf"] = make_pdf_redacted(f"{OUT}/report-redacted.pdf")
     facts["report-incremental.pdf"] = make_pdf_incremental(f"{OUT}/report-incremental.pdf")
     facts["signed.pdf"] = make_pdf_signed(f"{OUT}/signed.pdf")
+    facts["nested.pdf"] = make_pdf_nested(f"{OUT}/nested.pdf")
+    facts["encrypted.pdf"] = make_pdf_encrypted(f"{OUT}/encrypted.pdf")
     facts["letter.docx"] = make_docx(f"{OUT}/letter.docx", thumb)
     facts["report.odt"] = make_odt(f"{OUT}/report.odt", thumb)
     facts["diagram.svg"] = make_svg(f"{OUT}/diagram.svg")

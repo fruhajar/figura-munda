@@ -645,6 +645,47 @@ fn a_pngs_orientation_and_colour_profile_survive_every_profile() {
     }
 }
 
+/// Hostile rather than broken: every bracket matches and `checkpdf.py` agrees
+/// the structure is sound, which is why a recursive parser walks straight into
+/// it and the process aborts with a core dump. The depth is counted before the
+/// parser sees the bytes, so the answer is a refusal and the rest of a folder
+/// run carries on.
+///
+/// If this regresses, it will not fail: it will take the test binary down.
+#[test]
+fn a_pdf_nested_deeper_than_the_parser_survives_is_refused() {
+    let (path, data) = fixture_or_skip!("nested.pdf");
+    match inspect_bytes(&data, ext(&path).as_deref()) {
+        Err(fm_core::Error::Refused(why)) => {
+            assert!(why.contains("nest"), "{why}");
+            assert!(why.contains("20000") || why.contains("20001"), "{why}");
+        }
+        Err(e) => panic!("expected a refusal naming the depth, got {e}"),
+        Ok(ins) => panic!("a file nested 20000 deep was parsed into {} fields", ins.findings.len()),
+    }
+    assert!(clean_bytes(&data, ext(&path).as_deref(), &Profile::standard()).is_err());
+}
+
+/// An encrypted document used to be inspected as an ordinary one and cleaned
+/// into a file that still said `/Encrypt` while its strings had been rewritten
+/// in plaintext and its `/ID`, which is an input to the key, replaced. That
+/// file is not cleaned, it is destroyed.
+#[test]
+fn an_encrypted_pdf_is_refused_with_nothing_reported_out_of_it() {
+    let (path, data) = fixture_or_skip!("encrypted.pdf");
+    let ins = inspect_bytes(&data, ext(&path).as_deref()).unwrap();
+    assert!(ins.refused(), "an encrypted document was inspected as an ordinary one");
+    assert!(ins.blockers[0].reason.contains("encrypted"), "{:?}", ins.blockers[0]);
+    assert!(ins.blockers[0].detail.contains("Standard"), "{:?}", ins.blockers[0]);
+    assert!(ins.findings.is_empty(), "ciphertext was reported as fields: {:?}", ins.findings);
+
+    match clean_bytes(&data, ext(&path).as_deref(), &Profile::standard()) {
+        Err(fm_core::Error::Refused(why)) => assert!(why.contains("encrypted"), "{why}"),
+        Err(e) => panic!("expected a refusal, got {e}"),
+        Ok(_) => panic!("an encrypted document was cleaned"),
+    }
+}
+
 #[test]
 fn every_fixture_is_either_cleaned_verifiably_or_refused_with_a_reason() {
     let names = [
@@ -655,6 +696,7 @@ fn every_fixture_is_either_cleaned_verifiably_or_refused_with_a_reason() {
         "report-redacted.pdf",
         "report-incremental.pdf",
         "signed.pdf",
+        "encrypted.pdf",
         "photo-codepage.jpg",
         "photo-oriented.png",
         "report.odt",
@@ -678,7 +720,7 @@ fn every_fixture_is_either_cleaned_verifiably_or_refused_with_a_reason() {
                 Err(fm_core::Error::Refused(why)) => {
                     assert!(!why.is_empty(), "{name} refused with no reason");
                     assert!(
-                        name == "signed.pdf" || name == "report.odt",
+                        matches!(name, "signed.pdf" | "report.odt" | "encrypted.pdf"),
                         "{name} was refused unexpectedly: {why}"
                     );
                 }
