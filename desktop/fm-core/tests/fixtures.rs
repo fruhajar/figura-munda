@@ -686,6 +686,45 @@ fn an_encrypted_pdf_is_refused_with_nothing_reported_out_of_it() {
     }
 }
 
+/// The guarantee, asserted as a claim rather than left to an error path:
+/// every change names a field the report named first, unless it says it is a
+/// consequence of cleaning. The photograph used to lose `exif:exif:0x9000`
+/// with no mention of it in the report or the diff.
+#[test]
+fn every_change_to_every_fixture_names_something_the_report_named_first() {
+    let names = [
+        "photo-phone.jpg",
+        "photo-codepage.jpg",
+        "photo-oriented.png",
+        "screenshot.png",
+        "diagram.svg",
+        "letter.docx",
+        "report-redacted.pdf",
+        "report-incremental.pdf",
+        "clip.mp4",
+        "clip-ios.mov",
+    ];
+    for name in names {
+        let Some((path, data)) = fixture(name) else { continue };
+        for profile in Profile::builtins() {
+            if profile.inert() {
+                continue;
+            }
+            let cleaned = clean_bytes(&data, ext(&path).as_deref(), &profile).unwrap();
+            let reported: std::collections::HashSet<&str> =
+                cleaned.before.findings.iter().map(|f| f.locator.as_str()).collect();
+            for change in &cleaned.changes {
+                assert!(
+                    change.derived || reported.contains(change.locator.as_str()),
+                    "{name} under {}: {} was changed and never reported",
+                    profile.name,
+                    change.locator
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn every_fixture_is_either_cleaned_verifiably_or_refused_with_a_reason() {
     let names = [

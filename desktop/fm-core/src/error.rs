@@ -12,6 +12,12 @@ pub enum Error {
     Refused(String),
     #[error("cleaning would not have removed {0}")]
     VerifyFailed(String),
+    #[error(
+        "cleaning would have changed something the report never mentioned: {}. \
+         That is a defect in this tool, not in your file, and nothing was written.",
+        .0.join(", ")
+    )]
+    Unreported(Vec<String>),
     #[error("{0}")]
     Profile(#[from] crate::profile::ProfileError),
 }

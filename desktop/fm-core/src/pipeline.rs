@@ -56,6 +56,7 @@ pub fn clean_bytes(data: &[u8], ext: Option<&str>, profile: &Profile) -> Result<
         return Err(Error::Refused(format!("{}: {}", b.reason, b.detail)));
     }
     let outcome = handler.clean(data, profile)?;
+    unreported(&before, &outcome.changes)?;
     let after = handler.inspect(&outcome.data)?;
     let verification = Verification::after(&after, profile, &outcome.changes);
     let counts = Counts::of(&before, &outcome.changes);
@@ -139,6 +140,31 @@ pub fn clean_file(
     }
     cleaned.after.findings.extend(fsmeta::inspect(dest));
     Ok(cleaned)
+}
+
+/// The promise is that the report names every field before anything is
+/// written, so a change naming a field no finding mentioned is a broken
+/// promise rather than a tidy-up.
+///
+/// It was possible, and not in theory: the EXIF reader skipped tags it did not
+/// recognise while the writer dropped them anyway, so a photograph lost
+/// `exif:exif:0x9000` without a word about it in the report or the diff.
+///
+/// Consequences of cleaning are exempt, and say so one by one through
+/// [`Change::derived`]: sample offsets corrected for bytes removed ahead of
+/// them were never a field anyone could have been shown.
+fn unreported(before: &Inspection, changes: &[Change]) -> Result<()> {
+    let named: std::collections::HashSet<&str> =
+        before.findings.iter().map(|f| f.locator.as_str()).collect();
+    let missing: Vec<String> = changes
+        .iter()
+        .filter(|c| !c.derived && !named.contains(c.locator.as_str()))
+        .map(|c| format!("{} ({})", c.locator, c.label))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(Error::Unreported(missing))
 }
 
 /// Everything that has to be true before a byte is written.
@@ -395,6 +421,33 @@ mod tests {
             assert!(name.ends_with(".fm-part"), "{name}");
             assert!(name.starts_with("photo."), "{name}");
         }
+    }
+
+    /// The guarantee itself: a change naming something no finding mentioned
+    /// stops the clean, because the report was shown before the write and has
+    /// to have been complete.
+    #[test]
+    fn a_change_the_report_never_mentioned_is_refused() {
+        let data = dirty_png();
+        let before = inspect_bytes(&data, Some("png")).unwrap();
+        let named = before.findings[0].locator.clone();
+
+        assert!(unreported(&before, &[]).is_ok());
+        assert!(
+            unreported(
+                &before,
+                &[Change::removed(Class::Identity, named, "something reported", None)]
+            )
+            .is_ok()
+        );
+
+        let invented =
+            Change::removed(Class::Device, "png:invented", "a field nobody was shown", None);
+        let err = unreported(&before, std::slice::from_ref(&invented)).unwrap_err();
+        assert!(matches!(err, Error::Unreported(ref what) if what[0].contains("png:invented")), "{err}");
+
+        // A consequence of cleaning says so, and is allowed.
+        assert!(unreported(&before, &[invented.derived()]).is_ok());
     }
 
     #[test]

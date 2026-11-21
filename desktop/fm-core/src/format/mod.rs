@@ -29,6 +29,15 @@ pub struct Change {
     pub action: Action,
     pub before: Option<String>,
     pub after: Option<String>,
+    /// Whether this is something cleaning did rather than a field the file
+    /// disclosed: sample offsets corrected for what was removed ahead of them,
+    /// objects pruned because nothing points at them any more.
+    ///
+    /// Everything else has to be named in the report that was shown before a
+    /// byte was written, and [`crate::pipeline::clean_bytes`] refuses the clean
+    /// if it is not. This flag is how a handler says "there was no field here
+    /// to report", and saying it wrongly is how the guarantee would rot.
+    pub derived: bool,
 }
 
 impl Change {
@@ -40,6 +49,7 @@ impl Change {
             action: Action::Remove,
             before,
             after: None,
+            derived: false,
         }
     }
 
@@ -51,7 +61,13 @@ impl Change {
         before: Option<String>,
         after: Option<String>,
     ) -> Self {
-        Change { class, locator: locator.into(), label: label.into(), action, before, after }
+        Change { class, locator: locator.into(), label: label.into(), action, before, after, derived: false }
+    }
+
+    /// A consequence of cleaning rather than a field that was in the file, so
+    /// no finding named it and none should have.
+    pub fn derived(self) -> Self {
+        Change { derived: true, ..self }
     }
 }
 

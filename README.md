@@ -54,6 +54,14 @@ Four visible artefacts carry it:
 
 A count helps too: "47 fields across 6 classes, 41 removed, 6 preserved."
 
+That promise is enforced rather than intended: a clean whose diff names a field
+the report did not is refused, and nothing is written. Consequences of cleaning
+are exempt and say so one by one in the code, because sample offsets corrected
+for removed bytes were never a field anyone could have been shown. The check
+earned its place immediately: a photograph was losing its EXIF version field
+with no mention of it in either the report or the diff, because the reader
+skipped tags it did not recognise while the writer dropped them anyway.
+
 ## The option model
 
 This is the core of the design. Two axes, rolled up into selectable profiles.
@@ -445,7 +453,7 @@ cleaning engine, the redaction checks and the runner never will be.
 
 ## Where it stands
 
-**Tested, and the tests say what they test.** 259 of them. The engine is checked
+**Tested, and the tests say what they test.** 261 of them. The engine is checked
 against `fixtures/manifest.json`, which declares field by field what each
 generated fixture contains, so the manifest is the contract between the Python
 generator and the Rust engine and neither can quietly agree with itself. The

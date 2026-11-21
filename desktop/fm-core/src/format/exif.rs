@@ -594,6 +594,11 @@ pub fn tag_info(space: Space, tag: u16) -> Option<TagInfo> {
         }
         (Space::Exif, 0x927C) => info(Class::Device, "maker notes, an opaque block that usually repeats the serial number"),
         (Space::Exif, 0xA420) => info(Class::Correlation, "unique image ID, which links copies of this picture"),
+        // Universal, harmless on its own, and removed with the rest of the
+        // block: named so the report does not call the EXIF version an
+        // unrecognised field.
+        (Space::Exif, 0x9000) => info(Class::Device, "the EXIF version the block declares"),
+        (Space::Exif, 0xA000) => info(Class::Device, "the Flashpix version the block declares"),
         (Space::Exif, 0xA430) => info(Class::Identity, "camera owner"),
         (Space::Exif, 0xA431) => info(Class::Device, "camera body serial number"),
         (Space::Exif, 0xA433) => info(Class::Device, "lens maker"),
@@ -684,7 +689,21 @@ pub fn inspect_entries(exif: &Exif, ins: &mut Inspection) {
 
     for space in [Space::Ifd0, Space::Exif, Space::Gps, Space::Interop] {
         for e in exif.space(space) {
-            let Some(info) = tag_info(space, e.tag) else { continue };
+            // An unrecognised tag is removed as a device fingerprint, which
+            // [`fate`] explains, so it has to be reported as one. Skipping it
+            // here while dropping it there is how a photograph lost
+            // `exif:exif:0x9000` with no mention of it anywhere.
+            let info = match tag_info(space, e.tag) {
+                Some(i) => i,
+                // Rendering hints are kept rather than removed, so there is
+                // nothing to report: the same rule as in [`fate`].
+                None if RENDER_TAGS.contains(&e.tag) => continue,
+                None => TagInfo {
+                    class: Class::Device,
+                    label: "an unrecognised field, removed because what it holds cannot be judged",
+                    protected: false,
+                },
+            };
             let value = display_for(exif, space, e);
             let mut f = Finding::new(
                 info.class,

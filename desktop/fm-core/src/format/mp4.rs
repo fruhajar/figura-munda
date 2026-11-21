@@ -544,26 +544,41 @@ impl Handler for Mp4 {
         // rather than removed: there is no way to omit them.
         let after_tree = root(&out);
         if profile.action(Class::Time) != Action::Keep {
-            let mut edits: Vec<(usize, bool, Civil, Civil)> = Vec::new();
+            let mut edits: Vec<(usize, bool, Civil, Civil, String, &str)> = Vec::new();
             for b in after_tree.descendants() {
                 let Some(fields) = time_fields(&out, b) else { continue };
-                for at in [fields.created_at, fields.modified_at] {
+                for (at, what) in [
+                    (fields.created_at, "recording time"),
+                    (fields.modified_at, "last modification time"),
+                ] {
                     let Some(original) = read_time(&out, at, fields.wide) else { continue };
+                    let name = b.name();
                     match profile.apply_time(Some(original)) {
                         TimeOutcome::Unchanged => {}
                         // A zero means "unknown", which is what every box that
                         // never had a time carries, so removal is expressible.
-                        TimeOutcome::Drop => edits.push((at, fields.wide, original, Civil::from_unix_seconds(-MP4_EPOCH_OFFSET))),
-                        TimeOutcome::Set(c) => edits.push((at, fields.wide, original, c)),
+                        TimeOutcome::Drop => edits.push((
+                            at,
+                            fields.wide,
+                            original,
+                            Civil::from_unix_seconds(-MP4_EPOCH_OFFSET),
+                            name,
+                            what,
+                        )),
+                        TimeOutcome::Set(c) => {
+                            edits.push((at, fields.wide, original, c, name, what))
+                        }
                     }
                 }
             }
-            for (at, wide, original, replacement) in edits {
+            for (at, wide, original, replacement, name, what) in edits {
                 write_time(&mut out, at, wide, replacement);
                 changes.push(Change::rewritten(
                     Class::Time,
-                    "mp4:header-time",
-                    "the recording time in the file's own header",
+                    // The locator the report used for this field, so the diff
+                    // and the report name the same thing.
+                    format!("mp4:{name}:{what}"),
+                    format!("{what} in the {name} header"),
                     profile.action(Class::Time),
                     Some(original.to_iso()),
                     Some(replacement.to_iso()),
@@ -681,14 +696,19 @@ fn fix_chunk_offsets(out: &mut [u8], ranges: &[(usize, usize)], changes: &mut Ve
         }
     }
     if corrected > 0 {
-        changes.push(Change::rewritten(
-            Class::StructuralFingerprint,
-            "mp4:stco",
-            "sample offsets corrected for the bytes removed ahead of the media",
-            Action::RewriteUniform,
-            None,
-            Some(format!("{corrected} offsets")),
-        ));
+        // A consequence of the removals: nothing in the file disclosed these,
+        // and leaving them wrong is what would make the clip play as garbage.
+        changes.push(
+            Change::rewritten(
+                Class::StructuralFingerprint,
+                "mp4:stco",
+                "sample offsets corrected for the bytes removed ahead of the media",
+                Action::RewriteUniform,
+                None,
+                Some(format!("{corrected} offsets")),
+            )
+            .derived(),
+        );
     }
     Ok(())
 }

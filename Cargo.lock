@@ -1136,7 +1136,7 @@ dependencies = [
 
 [[package]]
 name = "fm-cli"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1147,7 +1147,7 @@ dependencies = [
 
 [[package]]
 name = "fm-core"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "flate2",
  "lopdf",
@@ -1163,7 +1163,7 @@ dependencies = [
 
 [[package]]
 name = "fm-gui"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "eframe",
@@ -1177,7 +1177,7 @@ dependencies = [
 
 [[package]]
 name = "fm-runner"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "fm-core",
  "jni 0.21.1",

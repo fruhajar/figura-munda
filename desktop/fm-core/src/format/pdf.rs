@@ -966,12 +966,17 @@ impl Handler for Pdf {
         // written out, so everything now unreachable from the trailer goes.
         let orphans = doc.prune_objects();
         if !orphans.is_empty() && profile.alters(Class::HiddenPayload) {
-            changes.push(Change::removed(
-                Class::HiddenPayload,
-                "pdf:orphans",
-                "the contents of what was unlinked above, which would otherwise stay in the file",
-                Some(format!("{} objects", orphans.len())),
-            ));
+            // A consequence of the removals above rather than a field of its
+            // own: these objects were named through whatever pointed at them.
+            changes.push(
+                Change::removed(
+                    Class::HiddenPayload,
+                    "pdf:orphans",
+                    "the contents of what was unlinked above, which would otherwise stay in the file",
+                    Some(format!("{} objects", orphans.len())),
+                )
+                .derived(),
+            );
         }
 
         // Pin the cross-reference style to a classic table.
