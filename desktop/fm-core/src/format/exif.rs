@@ -819,6 +819,34 @@ pub fn clean_entries(exif: &Exif, profile: &Profile, changes: &mut Vec<Change>) 
     (!out.is_empty()).then_some(out)
 }
 
+/// The entries that have to survive whatever else goes: the ones [`tag_info`]
+/// marks protected, which is the orientation and an embedded colour profile.
+///
+/// Dropping a whole EXIF block is a legitimate thing for a profile to want,
+/// because a block that is rare in a format is a fingerprint on its own.
+/// Taking the orientation with it is not: the picture comes out on its side,
+/// and that is a regression rather than a protection. So a caller that is
+/// about to drop a block asks here what it must write again.
+pub fn protected_entries(exif: &Exif) -> Option<Exif> {
+    let mut out = Exif { le: true, ..Default::default() };
+    for space in [Space::Ifd0, Space::Exif, Space::Gps, Space::Interop] {
+        for e in exif.space(space) {
+            if !tag_info(space, e.tag).is_some_and(|i| i.protected) {
+                continue;
+            }
+            let entry = if exif.le { e.clone() } else { swap_endian(e) };
+            match space {
+                Space::Ifd0 => out.ifd0.push(entry),
+                Space::Exif => out.exif.push(entry),
+                Space::Gps => out.gps.push(entry),
+                Space::Interop => out.interop.push(entry),
+                Space::Ifd1 => {}
+            }
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 fn swap_endian(e: &Entry) -> Entry {
     let width = match e.typ {
         TYPE_SHORT => 2,

@@ -173,6 +173,28 @@
         "total_bytes": 446
       }
     },
+    "photo-oriented.png": {
+      "classes": {
+        "_contract": "The whole eXIf block is unusual in a PNG and worth dropping, and the orientation inside it must not go with it. Dropping it turns the picture on its side, and reporting it as preserved while dropping it is worse than either.",
+        "device": [
+          "eXIf Make=Apple",
+          "eXIf Model=iPhone 14 Pro",
+          "eXIf Software=Adobe Photoshop 25.5"
+        ],
+        "never_remove": [
+          "eXIf Orientation=6, which decides which way up the image is shown: it survives every profile, including the ones that drop the rest of the block to match what common tools leave",
+          "iCCP colour profile, untouched by every profile"
+        ],
+        "time": [
+          "eXIf DateTimeOriginal=2024:06:14 19:42:07"
+        ]
+      },
+      "observed": {
+        "icc_bytes": 132,
+        "orientation": 6,
+        "total_bytes": 614
+      }
+    },
     "photo-phone.jpg": {
       "classes": {
         "correlation": [

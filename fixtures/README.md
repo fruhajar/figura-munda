@@ -29,6 +29,7 @@ rejects. The Rust test suite runs it over every cleaned fixture.
 |---|---|
 | `photo-phone.jpg` | identity, device, location, time, correlation, hidden payload, never-remove |
 | `photo-codepage.jpg` | identity, device, written in Windows-1252 with nothing in the file declaring it |
+| `photo-oriented.png` | device, time, and **never-remove**: an orientation and a colour profile inside a block that is itself worth dropping |
 | `screenshot.png` | identity, device, time, correlation |
 | `report-redacted.pdf` | identity, device, time, correlation, **redaction integrity**, hidden payload |
 | `report-incremental.pdf` | history (prior revision fully recoverable) |

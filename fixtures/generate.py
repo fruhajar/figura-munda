@@ -556,6 +556,33 @@ def make_odt(path, thumb):
             "mimetype_first_and_stored": True}
 
 
+def make_png_oriented(path):
+    """A PNG as an editor leaves one after a phone photo: a camera's details in
+    an eXIf block, an orientation that decides which way up it is shown, and a
+    colour profile.
+
+    The orientation and the profile are the never-remove rule in a format where
+    the whole eXIf block is itself unusual enough to be worth dropping. Both
+    pulls are real and the rule wins: a cleaned file that comes out on its side
+    or in the wrong colours is a regression, not a protection.
+    """
+    w = h = 16
+    raw = b"".join(b"\0" + bytes((x * 16 + y) % 256 for x in range(w)) for y in range(h))
+    exif = E.build_exif(
+        {0x010F: E.ascii_("Apple"), 0x0110: E.ascii_("iPhone 14 Pro"),
+         0x0112: E.short_(6), 0x0131: E.ascii_("Adobe Photoshop 25.5")},
+        {0x9003: E.ascii_(TS)}, {}, {}, b"")
+    profile = icc_stub()
+    out = b"\x89PNG\r\n\x1a\n"
+    out += chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0))
+    out += chunk(b"eXIf", exif)
+    out += chunk(b"iCCP", b"ICC Profile\0\0" + zlib.compress(profile, 9))
+    out += chunk(b"IDAT", zlib.compress(raw, 9))
+    out += chunk(b"IEND", b"")
+    open(path, "wb").write(out)
+    return {"total_bytes": len(out), "orientation": 6, "icc_bytes": len(profile)}
+
+
 # --------------------------------------------------------------------------- #
 # SVG and MP4
 # --------------------------------------------------------------------------- #
@@ -721,6 +748,19 @@ DECLARED = {
         "time": ["tIME=2024-06-14T17:42:07Z", "eXIf DateTimeOriginal"],
         "correlation": ["iTXt XML:com.adobe.xmp carries DocumentID/InstanceID"],
     },
+    "photo-oriented.png": {
+        "device": ["eXIf Make=Apple", "eXIf Model=iPhone 14 Pro",
+                   "eXIf Software=Adobe Photoshop 25.5"],
+        "time": ["eXIf DateTimeOriginal=" + TS],
+        "never_remove": ["eXIf Orientation=6, which decides which way up the image is "
+                         "shown: it survives every profile, including the ones that drop "
+                         "the rest of the block to match what common tools leave",
+                         "iCCP colour profile, untouched by every profile"],
+        "_contract": "The whole eXIf block is unusual in a PNG and worth dropping, and "
+                     "the orientation inside it must not go with it. Dropping it turns "
+                     "the picture on its side, and reporting it as preserved while "
+                     "dropping it is worse than either.",
+    },
     "report-redacted.pdf": {
         "identity": ["/Author=" + AUTHOR, "XMP dc:creator"],
         "device": ["/Creator=Microsoft Word 2021", "/Producer=Acrobat Distiller 23.0"],
@@ -838,6 +878,7 @@ def main():
     facts["photo-phone.jpg"] = jp
     facts["photo-codepage.jpg"] = make_jpeg_codepage(f"{OUT}/photo-codepage.jpg")
     facts["screenshot.png"] = make_png(f"{OUT}/screenshot.png")
+    facts["photo-oriented.png"] = make_png_oriented(f"{OUT}/photo-oriented.png")
     facts["report-redacted.pdf"] = make_pdf_redacted(f"{OUT}/report-redacted.pdf")
     facts["report-incremental.pdf"] = make_pdf_incremental(f"{OUT}/report-incremental.pdf")
     facts["signed.pdf"] = make_pdf_signed(f"{OUT}/signed.pdf")

@@ -137,6 +137,35 @@ check("iTXt carries XMP DocumentID", b"DocumentID" in chunks[b"iTXt"][0])
 check("IDAT decompresses to 32 rows",
       len(zlib.decompress(chunks[b"IDAT"][0])) == 32 * 33)
 
+print("\n== photo-oriented.png ==")
+d = open(f"{OUT}/photo-oriented.png", "rb").read()
+chunks = {}
+i = 8
+while i < len(d):
+    ln = struct.unpack_from(">I", d, i)[0]
+    chunks[d[i + 4:i + 8]] = d[i + 8:i + 8 + ln]
+    i += 12 + ln
+check("the eXIf and iCCP chunks are both there",
+      b"eXIf" in chunks and b"iCCP" in chunks, " ".join(t.decode() for t in chunks))
+# The orientation tag, read out of the TIFF header by hand: this is the entry
+# the never-remove rule is about, so the fixture has to prove it is in there.
+ifd0 = {}
+if b"eXIf" in chunks:
+    e = chunks[b"eXIf"]
+    le = e[:2] == b"II"
+    endian = "<" if le else ">"
+    off = struct.unpack_from(endian + "I", e, 4)[0]
+    count = struct.unpack_from(endian + "H", e, off)[0]
+    for n in range(count):
+        at = off + 2 + n * 12
+        tag, typ, cnt = struct.unpack_from(endian + "HHI", e, at)
+        ifd0[tag] = struct.unpack_from(endian + "H", e, at + 8)[0] if typ == 3 else None
+check("eXIf carries Orientation=6", ifd0.get(0x0112) == 6, str(ifd0.get(0x0112)))
+check("eXIf also carries the camera, which is what has to go",
+      0x010F in ifd0 and 0x0110 in ifd0)
+check("the iCCP profile decompresses",
+      len(zlib.decompress(chunks.get(b"iCCP", b"")[13:])) > 100)
+
 print("\n== report-redacted.pdf ==")
 b = open(f"{OUT}/report-redacted.pdf", "rb").read()
 txt = b[b.find(b"4 0 obj"):b.find(b"endstream", b.find(b"4 0 obj"))]

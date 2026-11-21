@@ -210,7 +210,16 @@ impl Handler for Png {
                     );
                 }
                 b"eXIf" => {
-                    ins.mark("png:exif");
+                    // A block holding nothing but what must never be removed is
+                    // a different shape from a block holding a camera's
+                    // details, and the crowd a cleaned file joins depends on
+                    // which it is.
+                    let protected_only = Exif::parse(&c.data).is_ok_and(|e| {
+                        let mut inner = Inspection::new(FormatId::Png, 0);
+                        exif::inspect_entries(&e, &mut inner);
+                        !inner.findings.is_empty() && inner.findings.iter().all(|f| f.protected)
+                    });
+                    ins.mark(if protected_only { "png:exif-protected-only" } else { "png:exif" });
                     match Exif::parse(&c.data) {
                         Ok(exif) => exif::inspect_entries(&exif, &mut ins),
                         Err(e) => ins.findings.push(
@@ -325,13 +334,33 @@ impl Handler for Png {
                 }
                 b"eXIf" if profile.may_blend_away(FormatId::Png) => {
                     // An EXIF block in a PNG is rare enough on its own to be a
-                    // fingerprint, so there is nothing in it worth keeping.
-                    let mut inner = Inspection::new(FormatId::Png, 0);
-                    if let Ok(exif) = Exif::parse(&c.data) {
-                        exif::inspect_entries(&exif, &mut inner);
+                    // fingerprint, so the block goes. What cannot go with it is
+                    // the orientation, or a colour profile stored in it: the
+                    // picture would come out on its side or the wrong colour.
+                    // Those were being dropped while the report counted them as
+                    // preserved, which is the one kind of wrong this tool
+                    // cannot be.
+                    let parsed = Exif::parse(&c.data);
+                    match &parsed {
+                        Ok(exif) => {
+                            let mut inner = Inspection::new(FormatId::Png, 0);
+                            exif::inspect_entries(exif, &mut inner);
+                            for f in inner.findings.into_iter().filter(|f| !f.protected) {
+                                changes.push(blended_away(f.class, f.locator, f.label, f.value, WHY_EXIF));
+                            }
+                        }
+                        // A block nothing can read cannot be shown to hold
+                        // anything protected, so it goes, and says so rather
+                        // than disappearing without a line in the diff.
+                        Err(e) => changes.push(Change::removed(
+                            Class::Device,
+                            "png:eXIf",
+                            "unreadable EXIF block",
+                            Some(e.to_string()),
+                        )),
                     }
-                    for f in inner.findings.into_iter().filter(|f| !f.protected) {
-                        changes.push(blended_away(f.class, f.locator, f.label, f.value, WHY_EXIF));
+                    if let Some(kept) = parsed.ok().as_ref().and_then(exif::protected_entries) {
+                        out.push(Chunk { kind: *b"eXIf", data: kept.to_tiff() });
                     }
                 }
                 b"eXIf" => match Exif::parse(&c.data) {
@@ -433,6 +462,66 @@ mod tests {
         let device = out.changes.iter().find(|c| c.class == Class::Device).expect("no device change");
         assert!(device.label.contains("EXIF block in a PNG is unusual"), "{}", device.label);
         assert!(out.changes.iter().any(|c| c.class == Class::Time));
+    }
+
+    /// The never-remove rule, on the path that used to break it. Blending
+    /// drops the whole block, which is right, and used to take the orientation
+    /// with it while the report counted it as preserved: the picture came out
+    /// on its side and nothing said so.
+    #[test]
+    fn blending_away_an_exif_block_leaves_the_orientation_behind() {
+        let mut exif = crate::format::exif::Exif { le: true, ..Default::default() };
+        exif.ifd0.push(crate::format::exif::Entry::ascii(0x010F, "Apple"));
+        exif.ifd0.push(crate::format::exif::Entry::ascii(0x0110, "iPhone 14 Pro"));
+        exif.ifd0.push(crate::format::exif::Entry::short(0x0112, 6));
+        let data = png_with(vec![Chunk { kind: *b"eXIf", data: exif.to_tiff() }]);
+
+        for profile in Profile::builtins() {
+            if profile.inert() {
+                continue;
+            }
+            let out = Png.clean(&data, &profile).unwrap();
+            let after = Png.inspect(&out.data).unwrap();
+
+            let orientation = after
+                .findings
+                .iter()
+                .find(|f| f.locator == "exif:ifd0:0x0112")
+                .unwrap_or_else(|| panic!("{}: the orientation is gone", profile.name));
+            assert_eq!(orientation.value.as_deref(), Some("6"), "{}", profile.name);
+            assert!(orientation.protected, "{}: kept but not reported as protected", profile.name);
+
+            // The device fields go, and say so.
+            assert!(
+                after.in_class(Class::Device).all(|f| f.locator == "exif:ifd0:0x0112"),
+                "{}: {:?}",
+                profile.name,
+                after.in_class(Class::Device).map(|f| &f.locator).collect::<Vec<_>>()
+            );
+            assert!(out.changes.iter().any(|c| c.before.as_deref() == Some("iPhone 14 Pro")));
+            // And nothing claims to have preserved something it removed.
+            assert!(
+                !out.changes.iter().any(|c| c.locator == "exif:ifd0:0x0112"),
+                "{}: the orientation is listed as changed",
+                profile.name
+            );
+        }
+    }
+
+    /// What is left is a block holding only what must never go, which is a
+    /// different crowd from a block holding a camera's details and from a PNG
+    /// that never had one.
+    #[test]
+    fn a_block_holding_only_the_orientation_is_its_own_shape() {
+        let mut exif = crate::format::exif::Exif { le: true, ..Default::default() };
+        exif.ifd0.push(crate::format::exif::Entry::short(0x0112, 6));
+        let data = png_with(vec![Chunk { kind: *b"eXIf", data: exif.to_tiff() }]);
+        let ins = Png.inspect(&data).unwrap();
+        assert!(ins.shape.contains(&"png:exif-protected-only".to_string()), "{:?}", ins.shape);
+        assert!(!ins.shape.contains(&"png:exif".to_string()));
+
+        let sig = crate::anonset::classify(FormatId::Png, &ins.shape).expect("no crowd named");
+        assert_eq!(sig.id, "png-orientation-only");
     }
 
     #[test]

@@ -598,6 +598,53 @@ fn a_name_in_a_windows_codepage_is_shown_as_a_name() {
     assert!(!cleaned.data.windows(9).any(|w| w == b"J\xfcrgen M"), "the name is still in the file");
 }
 
+/// The never-remove rule in the format where it is hardest: a whole eXIf block
+/// is unusual in a PNG and worth dropping, and the orientation inside it must
+/// not go with it. It was going, and the count said "1 preserved" while it
+/// went, which is worse than either outcome on its own.
+#[test]
+fn a_pngs_orientation_and_colour_profile_survive_every_profile() {
+    let (path, data) = fixture_or_skip!("photo-oriented.png");
+    let before = inspect_bytes(&data, ext(&path).as_deref()).unwrap();
+    assert!(values(&before, Class::Device).join(" ").contains("iPhone 14 Pro"));
+
+    for profile in Profile::builtins() {
+        if profile.inert() {
+            continue;
+        }
+        let cleaned = clean_bytes(&data, ext(&path).as_deref(), &profile).unwrap();
+        assert!(cleaned.verification.clean(), "{}: {:?}", profile.name, cleaned.verification.leftovers);
+        let after = &cleaned.after;
+
+        let orientation = after
+            .findings
+            .iter()
+            .find(|f| f.locator == "exif:ifd0:0x0112")
+            .unwrap_or_else(|| panic!("{}: the orientation is gone", profile.name));
+        assert_eq!(orientation.value.as_deref(), Some("6"), "{}", profile.name);
+        assert!(orientation.protected, "{}", profile.name);
+        assert!(
+            after.findings.iter().any(|f| f.locator == "png:iCCP"),
+            "{}: the colour profile is gone",
+            profile.name
+        );
+
+        // The camera goes, and is named in the diff as having gone.
+        assert!(!values(after, Class::Device).join(" ").contains("iPhone 14 Pro"), "{}", profile.name);
+        assert!(cleaned.changes.iter().any(|c| c.before.as_deref() == Some("iPhone 14 Pro")));
+
+        // And nothing that stayed is listed as a change, which is how the
+        // count came to claim a field it had dropped.
+        for kept in ["exif:ifd0:0x0112", "png:iCCP"] {
+            assert!(
+                !cleaned.changes.iter().any(|c| c.locator == kept),
+                "{}: {kept} both stayed and was reported as changed",
+                profile.name
+            );
+        }
+    }
+}
+
 #[test]
 fn every_fixture_is_either_cleaned_verifiably_or_refused_with_a_reason() {
     let names = [
@@ -609,6 +656,7 @@ fn every_fixture_is_either_cleaned_verifiably_or_refused_with_a_reason() {
         "report-incremental.pdf",
         "signed.pdf",
         "photo-codepage.jpg",
+        "photo-oriented.png",
         "report.odt",
         "clip.mp4",
         "clip-ios.mov",

@@ -216,7 +216,7 @@ those words rather than quietly leaving them out.
 | Format | State |
 |---|---|
 | **JPEG** | Done. EXIF in every IFD, IPTC in the Photoshop resource block, XMP, the ICC profile, comments, and the IFD1 thumbnail that holds the uncropped original. |
-| **PNG** | Done. `tEXt`, `zTXt`, `iTXt` including XMP, `tIME`, `eXIf`, with `iCCP` and the colour chunks untouched. |
+| **PNG** | Done. `tEXt`, `zTXt`, `iTXt` including XMP, `tIME`, `eXIf`, with `iCCP` and the colour chunks untouched. An `eXIf` block is unusual enough in a PNG that blending drops the whole thing, except for what the never-remove rule keeps: the orientation and a colour profile stored in it are written back, and the report names the crowd that leaves. |
 | **SVG** | Done. The metadata block, the editor namespaces, markup comments, scripts, and content parked outside the `viewBox`, judged by what an element covers rather than where its anchor sits, so a bleed background is artwork and not a payload. |
 | **OOXML** | Done for DOCX. Core and app properties, custom properties, the thumbnail, comments, the people list, tracked changes, `rsid` save identifiers, the document GUID, and the container's own member order and timestamps. XLSX and PPTX share the engine; their format-specific parts (hidden sheets, speaker notes) are reported, not removed. |
 | **PDF** | Done. Info dictionary, XMP, the trailer `/ID`, attachments and JavaScript wherever they hang, in the catalog name tree and on a page's own annotations and actions alike, incremental-update history, the redaction check, and signature detection. |
@@ -427,7 +427,7 @@ cleaning engine, the redaction checks and the runner never will be.
 
 ## Where it stands
 
-**Tested, and the tests say what they test.** 244 of them. The engine is checked
+**Tested, and the tests say what they test.** 247 of them. The engine is checked
 against `fixtures/manifest.json`, which declares field by field what each
 generated fixture contains, so the manifest is the contract between the Python
 generator and the Rust engine and neither can quietly agree with itself. The
