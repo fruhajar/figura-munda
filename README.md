@@ -358,6 +358,24 @@ tools/check-trust.sh            # the trust posture, checked rather than asserte
 tools/check-reproducible.sh     # two builds, two paths, one binary
 ```
 
+**What it will not do to your files.** Four of these were ways to lose one, so
+they are refusals rather than warnings, and each names the path it is about:
+
+- Writing the cleaned file over the original, which `--out` pointed at the
+  originals' own folder used to do silently. Say `--in-place` if that is what
+  you mean.
+- Writing over a file at the destination that is not this file cleaned. A
+  second run of the same job writes again, because cleaning is idempotent and
+  the result is identical; anything else is somebody's file, and `--overwrite`
+  is how you say otherwise.
+- Cleaning two sources with one name into one folder, which would quietly keep
+  whichever finished last. The whole list is checked before anything is
+  written.
+- Cleaning a symlink or one name of a hardlinked file in place. The first would
+  leave a cleaned file where the link was and the original untouched where it
+  pointed; the second would leave every other name on the original content. Both
+  read as a clean that happened when it did not.
+
 ### The window
 
 Two phases, in that order: **look at the files, then clean them.** The first
@@ -427,7 +445,7 @@ cleaning engine, the redaction checks and the runner never will be.
 
 ## Where it stands
 
-**Tested, and the tests say what they test.** 253 of them. The engine is checked
+**Tested, and the tests say what they test.** 259 of them. The engine is checked
 against `fixtures/manifest.json`, which declares field by field what each
 generated fixture contains, so the manifest is the contract between the Python
 generator and the Rust engine and neither can quietly agree with itself. The

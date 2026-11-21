@@ -58,6 +58,10 @@ enum Command {
         /// Proceed even where cleaning removes visible content.
         #[arg(long)]
         allow_content_loss: bool,
+        /// Replace files already at the destination. Without this, a
+        /// destination holding anything but this file cleaned is refused.
+        #[arg(long)]
+        overwrite: bool,
         #[arg(long)]
         json: bool,
     },
@@ -167,7 +171,17 @@ fn main() -> Result<()> {
             }
         }
 
-        Command::Clean { paths, profile, out, in_place, recursive, dry_run, allow_content_loss, json } => {
+        Command::Clean {
+            paths,
+            profile,
+            out,
+            in_place,
+            recursive,
+            dry_run,
+            allow_content_loss,
+            overwrite,
+            json,
+        } => {
             let profile = load_profile(&profile)?;
             profile.validate()?;
             if profile.inert() {
@@ -201,7 +215,38 @@ fn main() -> Result<()> {
                 }
             }
 
-            let disposition = if in_place { Disposition::InPlace } else { Disposition::Copy };
+            let disposition = match (in_place, overwrite) {
+                (true, _) => Disposition::InPlace,
+                (false, true) => Disposition::Overwrite,
+                (false, false) => Disposition::Copy,
+            };
+
+            // Two sources with the same name clean to one destination, and in a
+            // parallel run whichever finished last would silently be the one
+            // kept. Caught here, where the whole list is known, rather than
+            // raced for.
+            if !dry_run {
+                let mut seen: std::collections::HashMap<PathBuf, &PathBuf> = Default::default();
+                let mut clashes: Vec<String> = Vec::new();
+                for path in &files {
+                    let dest = destination(path, &out, in_place)?;
+                    if let Some(first) = seen.insert(dest.clone(), path) {
+                        clashes.push(format!(
+                            "  {} and {} would both be written to {}",
+                            first.display(),
+                            path.display(),
+                            dest.display()
+                        ));
+                    }
+                }
+                if !clashes.is_empty() {
+                    bail!(
+                        "{} name collision(s) at the destination, so nothing was written:\n{}",
+                        clashes.len(),
+                        clashes.join("\n")
+                    );
+                }
+            }
             let results: Vec<(PathBuf, Result<String>)> = files
                 .par_iter()
                 .map(|path| {
