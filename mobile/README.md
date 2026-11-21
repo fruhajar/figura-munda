@@ -98,6 +98,17 @@ interface worked out in full and not a thing that has been seen to run. They are
 a starting point for someone with a toolchain, not a shipped app. Treat every
 line as unverified.
 
+Three defects in it were found by reading rather than running, and are fixed
+in the same spirit: `walk` recursed with a subfolder's URI while asking
+`getTreeDocumentId` for the document to list, which answers with the tree's
+root, so a sweep walked the top folder for ever; the write truncated the
+document with `"wt"` and had nowhere to go back to when the system killed the
+worker partway, which it does as a matter of course, so the original is now
+written aside first and put back by the next sweep; and the call into
+`Native.due` passed a Boolean where the boundary takes an integer, which means
+the file as published could not have compiled. The last of those is the measure
+of how unverified this is.
+
 Before it can ship it needs, at least: the folder-picker flow and persisted
 permission grant, the settings screen that writes the profile file, a
 foreground-service notification for long sweeps, `cargo-ndk` in the build, and a

@@ -4,6 +4,10 @@
   user's files. It does not leave the device: no cloud backup, no device
   transfer. A privacy tool whose bookkeeping is backed up to a third party has
   given away the thing it was protecting.
+
+  The same exclusion covers the rescue copy SweepWorker writes aside before it
+  truncates a document, which is a copy of an uncleaned file and the one thing
+  here that would be worth more to somebody else than to the user.
 -->
 <data-extraction-rules>
     <cloud-backup>
