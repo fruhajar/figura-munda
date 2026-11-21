@@ -26,6 +26,62 @@ def fail(path, message):
     return 1
 
 
+def note(path, message):
+    print(f"  \033[33mNOTE\033[0m {path}: {message}")
+
+
+def revisions_in(data):
+    """`startxref` lines, not the word.
+
+    Counting the substring made a document whose own text mentions the keyword
+    look like two revisions. The engine had the same bug at the same time,
+    which is an argument for this being written separately rather than sharing
+    code with it: the mistake was shared, and only one of the two had to be
+    wrong for the other to catch it.
+
+    A linearized file's leading `startxref 0` is an artefact of linearization
+    rather than a revision.
+    """
+    found = re.findall(rb"(?m)^startxref\s+(\d+)", data)
+    return max(1, len([n for n in found if int(n) != 0]))
+
+
+def dict_at(data, at):
+    """The dictionary starting at or after `at`, by matching << against >>.
+
+    The trailer was read as the 600 bytes after the keyword, which is enough
+    for a small file and silently short for one with a long /ID or /Info, so a
+    /Prev past that window would have gone unseen.
+    """
+    start = data.find(b"<<", at)
+    if start == -1:
+        return b""
+    depth, i = 0, start
+    while i < len(data) - 1:
+        if data[i:i + 2] == b"<<":
+            depth += 1
+            i += 2
+        elif data[i:i + 2] == b">>":
+            depth -= 1
+            i += 2
+            if depth == 0:
+                return data[start:i]
+        else:
+            i += 1
+    return data[start:]
+
+
+def object_headers(data):
+    """Every `N G obj` that begins a line, by object number.
+
+    The table is read from the cross-reference section to the objects, which
+    says nothing about an object the section does not mention. Those are the
+    bytes a cleaner is supposed to have removed, so they are exactly what
+    wants checking from this direction.
+    """
+    return {int(m.group(1)) for m in re.finditer(rb"(?m)^(\d+)\s+\d+\s+obj\b", data)}
+
+
 def check(path, cleaned=False):
     data = open(path, "rb").read()
     problems = 0
@@ -37,7 +93,7 @@ def check(path, cleaned=False):
     if not starts:
         return fail(path, "no startxref")
     # A cleaned file should have exactly one revision.
-    revisions = len(starts)
+    revisions = revisions_in(data)
 
     tail = data[starts[-1]:]
     m = re.match(rb"startxref\s+(\d+)", tail)
@@ -100,7 +156,16 @@ def check(path, cleaned=False):
     if trailer == -1:
         problems += fail(path, "no trailer")
     else:
-        body = data[trailer:trailer + 600]
+        body = dict_at(data, trailer)
+        # Encryption is worth saying out loud about any file, and is a defect in
+        # a cleaned one: the engine refuses an encrypted document, because its
+        # strings are ciphertext and the trailer identifier is part of the key,
+        # so output that carries /Encrypt could only have been destroyed.
+        if b"/Encrypt" in body:
+            if cleaned:
+                problems += fail(path, "the trailer declares /Encrypt; a cleaned file cannot")
+            else:
+                note(path, "encrypted: /Encrypt in the trailer")
         if b"/Root" not in body:
             problems += fail(path, "trailer names no /Root")
         # A table's trailer must not carry a cross-reference stream's keys. A
@@ -117,10 +182,27 @@ def check(path, cleaned=False):
     if cleaned and revisions > 1:
         problems += fail(path, f"{revisions} revisions; cleaning should leave one")
 
+    # The other direction: objects in the file that the cross-reference section
+    # does not mention. In an arbitrary input those are ordinary, because an
+    # incremental update keeps its superseded objects, so they are reported as
+    # a count. In cleaned output they are a defect, since removing a pointer
+    # and leaving the bytes is the failure the engine's prune step exists for.
+    headers = object_headers(data)
+    stray = sorted(headers - set(entries))
+    if stray:
+        if cleaned:
+            problems += fail(
+                path,
+                f"object(s) {stray} are in the file and in no cross-reference entry",
+            )
+        else:
+            note(path, f"{len(stray)} object(s) not named by the last section: {stray}")
+
     if not problems:
         print(
             f"  \033[32mPASS\033[0m {path}: {len(entries)} objects, "
-            f"{revisions} revision(s), every offset lands on its object"
+            f"{revisions} revision(s), every offset lands on its object, "
+            f"{len(headers)} object header(s) in the file"
         )
     return problems
 

@@ -35,8 +35,14 @@ def closure(root):
         stack.extend(res[i]["dependencies"])
     return seen
 
-# Anything that speaks a network protocol or resolves a name. Display and
-# clipboard stacks are not on this list; they are checked by symbol below.
+# Anything that speaks a network protocol or resolves a name.
+#
+# This is a denylist, so it only knows what it has been told, and a crate can
+# reach the network through std with no dependency of its own. That gap is the
+# symbol check below, which reads the finished binaries rather than the
+# manifest. Display, clipboard and D-Bus stacks are deliberately absent here
+# and reported separately: they open sockets, locally, and that is what a
+# display server is.
 NET = re.compile(
     r"^(reqwest|hyper|h2|ureq|curl|isahc|surf|native-tls|openssl|rustls|"
     r"trust-dns|hickory|quinn|tungstenite|ftp|smtp|lettre|aws-|azure_|google-)",
@@ -53,18 +59,42 @@ sys.exit(bad)
 PY
 
 say ""
-say "== socket symbols in the release binaries =="
-if [ ! -x "${CARGO_TARGET_DIR:-target}/release/fm-cli" ]; then
-    say "   (build with --release first; skipping)"
+say "== socket symbols in the release artefacts =="
+# A check that cannot run is not a check that passed. Each of these used to be
+# a quiet skip or a silent zero, which is the same shape of lie as a cleaner
+# that reports a file as clean because it could not read it.
+bin="${CARGO_TARGET_DIR:-target}/release"
+if ! command -v nm >/dev/null 2>&1; then
+    say "   nm is not installed, so nothing here can be read: install binutils"
+    fail=1
+elif [ ! -x "$bin/fm-cli" ]; then
+    say "   $bin/fm-cli is not built: run cargo build --release --workspace first"
+    fail=1
 else
-    bin="${CARGO_TARGET_DIR:-target}/release"
-    for exe in fm-cli; do
-        found=$(nm -D --undefined-only "$bin/$exe" 2>/dev/null |
+    sockets='" (socket|connect|sendto|recvfrom|getaddrinfo|gethostby)"'
+    # fm-runner is a library, and the artefact that matters is the shared
+    # object the Android app loads, which is a real link with real imports.
+    for artefact in fm-cli libfm_runner.so; do
+        if [ ! -e "$bin/$artefact" ]; then
+            say "   $artefact is missing, so its symbols were not read"
+            fail=1
+            continue
+        fi
+        imports=$(nm -D --undefined-only "$bin/$artefact" 2>/dev/null | wc -l)
+        if [ "$imports" -eq 0 ]; then
+            # No imports at all means nm read nothing useful: a static binary,
+            # a stripped one, or a format it does not understand. Reporting
+            # "no socket symbols" from that would be a false pass.
+            say "   $artefact: nm found no imported symbols at all, so this says nothing"
+            fail=1
+            continue
+        fi
+        found=$(nm -D --undefined-only "$bin/$artefact" 2>/dev/null |
             grep -cE " (socket|connect|sendto|recvfrom|getaddrinfo|gethostby)" || true)
         if [ "$found" -eq 0 ]; then
-            say "   $exe: imports no socket symbols, so it cannot open one"
+            say "   $artefact: $imports imports, none of them a socket call"
         else
-            say "   $exe: FAIL, imports $found socket symbol(s)"
+            say "   $artefact: FAIL, imports $found socket symbol(s)"
             fail=1
         fi
     done
@@ -75,6 +105,9 @@ else
         say "           a display server is reached over a Unix socket, and the X11"
         say "           client in the clipboard stack can target a remote display."
         say "           The check that matters for the window is the crate audit above."
+    else
+        say "   fm-gui is not built, so its symbols were not read"
+        fail=1
     fi
 fi
 

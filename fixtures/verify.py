@@ -406,6 +406,61 @@ check("an independent reader still sees the declared fields",
       and "Marie Dvorakova" in r.stdout,
       r.stdout.strip().replace("\n", "; ")[:80] or r.stderr.strip()[:60])
 
+print("\n== checkpdf.py itself ==")
+# A checker that cannot fail is not a check, so each direction it reads is
+# given something broken on purpose. These are not fixtures: they are this
+# file's own forgeries, built from one and thrown away.
+import tempfile
+
+sound = open(f"{OUT}/report-redacted.pdf", "rb").read()
+r = subprocess.run(["python3", "checkpdf.py", "--cleaned", f"{OUT}/report-redacted.pdf"],
+                   capture_output=True, text=True)
+check("a sound file passes the strict mode", r.returncode == 0, r.stdout.strip()[-60:])
+
+with tempfile.TemporaryDirectory() as tmp:
+    # An object in the file that the cross-reference section does not mention,
+    # which is what a cleaner leaving the bytes of an unlinked attachment looks
+    # like. The insertion is after the table, so every offset still lands.
+    forged = os.path.join(tmp, "stray.pdf")
+    open(forged, "wb").write(
+        sound.replace(b"trailer", b"99 0 obj\n<< /Stray true >>\nendobj\ntrailer", 1))
+    r = subprocess.run(["python3", "checkpdf.py", "--cleaned", forged],
+                       capture_output=True, text=True)
+    check("an object no entry points at is caught",
+          r.returncode != 0 and "no cross-reference entry" in r.stdout,
+          r.stdout.strip().splitlines()[0][:70] if r.stdout.strip() else "")
+
+    # /Prev past the first 600 bytes of the trailer, which is where the old
+    # fixed window stopped looking.
+    forged = os.path.join(tmp, "prev.pdf")
+    padding = b"/Padding (" + b"x" * 800 + b") "
+    open(forged, "wb").write(
+        sound.replace(b"trailer\n<< ", b"trailer\n<< " + padding + b"/Prev 9 ", 1))
+    r = subprocess.run(["python3", "checkpdf.py", "--cleaned", forged],
+                       capture_output=True, text=True)
+    check("a /Prev past the old 600-byte window is caught",
+          r.returncode != 0 and "previous revision" in r.stdout,
+          r.stdout.strip().splitlines()[0][:70] if r.stdout.strip() else "")
+
+    # An offset that does not land on the object it claims, the direction this
+    # checker was written for in the first place.
+    bent = bytearray(sound)
+    # The ten digits before the first in-use entry's flags. Bending the free
+    # entry instead proves nothing: nothing reads it.
+    at = bent.find(b" 00000 n")
+    bent[at - 10:at] = b"0000000003"
+    forged = os.path.join(tmp, "bent.pdf")
+    open(forged, "wb").write(bytes(bent))
+    r = subprocess.run(["python3", "checkpdf.py", forged], capture_output=True, text=True)
+    check("an offset that lands on nothing is caught",
+          r.returncode != 0 and "points at" in r.stdout,
+          r.stdout.strip().splitlines()[0][:70] if r.stdout.strip() else "")
+
+r = subprocess.run(["python3", "checkpdf.py", f"{OUT}/encrypted.pdf"],
+                   capture_output=True, text=True)
+check("checkpdf says when a file is encrypted", "/Encrypt in the trailer" in r.stdout,
+      r.stdout.strip().splitlines()[0][:70])
+
 print("\n== filesystem ==")
 st = os.stat(f"{OUT}/photo-phone.jpg")
 check("mtime pinned to the declared instant", int(st.st_mtime) == 1718394127,

@@ -243,14 +243,24 @@ asserted:
 
 ```
 tools/check-trust.sh          networking crates, socket symbols, licences
-tools/check-reproducible.sh   builds twice in two paths and compares
+tools/check-reproducible.sh   builds the same source in two paths and compares
 ```
 
 Both run on every push, in `.github/workflows/checks.yml`, alongside the suite,
 the fixture contract and the sign-off this project asks for. A check nobody is
-obliged to run is a check that stops being run, and the socket-symbol one is
-worse than that: it skips with a notice when the release binaries are absent, so
-it would pass without having looked at anything.
+obliged to run is a check that stops being run, and the socket-symbol one was
+worse than that: it skipped with a notice when the release binaries were absent, so
+it would pass without having looked at anything. That is now a failure rather
+than a notice, along with the other ways it could pass without reading
+anything: `nm` missing, an artefact absent, or no imported symbols at all,
+which is what a static or stripped file looks like and says nothing either way.
+`libfm_runner.so` is read as well, because a library has no symbols until
+something links it and that shared object is what the Android app loads.
+
+The crate audit is a denylist, so it only knows the names it was given, and a
+crate can reach the network through `std` with no dependency at all. The symbol
+check is what covers that gap, which is why it has to be the one that cannot
+pass for free.
 
 What they found, and the nuance each one exposed:
 
@@ -466,8 +476,13 @@ engine, which is the only kind of check that means anything about output.
 - **No PDF has been opened in a real reader.** `fixtures/checkpdf.py` closes most
   of this: it parses the cross-reference table by hand, shares no code with the
   engine, and asserts every offset lands on the object it claims to, which is
-  the failure a library reading its own output would hide. It also confirms the
-  incremental fixture comes out with one revision instead of two. What it does
+  the failure a library reading its own output would hide. It reads the other
+  direction too, since an object in the file that the table does not mention is
+  exactly what unlinking an attachment without removing its bytes leaves
+  behind, and it says when a file is encrypted. `verify.py` hands it three
+  forgeries built from a sound file, because a checker that cannot fail is not a
+  check. It also confirms the incremental fixture comes out with one revision
+  instead of two. What it does
   not do is render a page, so "opens in Acrobat and looks right" is still
   unverified. Its first version skipped cross-reference streams quietly, which
   meant the output whose structure was least verified was exactly the output

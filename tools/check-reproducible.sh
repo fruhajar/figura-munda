@@ -14,18 +14,36 @@ root=$(pwd)
 work=${TMPDIR:-/tmp}/fm-reproduce.$$
 trap 'rm -rf "$work"' EXIT
 
-build() {
-    dir="$1"
-    rm -rf "$dir"
-    CARGO_TARGET_DIR="$dir" \
-    RUSTFLAGS="--remap-path-prefix=$root=/build --remap-path-prefix=$dir=/target --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}/registry=/registry" \
-        cargo build --release -q -p fm-cli
-    sha256sum "$dir/release/fm-cli" | cut -d' ' -f1
+# The claim is that the same source in two different directories gives the same
+# binary, so the source directory is what has to differ. Varying only
+# CARGO_TARGET_DIR, which is what this did, left the thing the README cites it
+# for unchecked: the build path leaks in through build scripts that embed their
+# own OUT_DIR, and OUT_DIR lives under the target directory, so that half was
+# real. The source half was not being tested at all.
+copy() {
+    dest="$1"
+    mkdir -p "$dest"
+    tar -c --exclude=target --exclude=.git --exclude=out -C "$root" . | tar -x -C "$dest"
 }
 
-printf 'building twice in two different paths\n'
-one=$(build "$work/a")
-two=$(build "$work/bb-deliberately-longer")
+build() {
+    src="$1"
+    out="$src/target"
+    CARGO_TARGET_DIR="$out" \
+    RUSTFLAGS="--remap-path-prefix=$out=/target --remap-path-prefix=$src=/build --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}/registry=/registry" \
+        cargo build --release -q -p fm-cli --manifest-path "$src/Cargo.toml"
+    sha256sum "$out/release/fm-cli" | cut -d' ' -f1
+}
+
+printf 'copying the source to two paths of different lengths\n'
+short="$work/a"
+long="$work/bb-deliberately-longer-source-path"
+copy "$short"
+copy "$long"
+
+printf 'building in each\n'
+one=$(build "$short")
+two=$(build "$long")
 
 printf '  %s\n  %s\n' "$one" "$two"
 if [ "$one" = "$two" ]; then
