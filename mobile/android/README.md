@@ -14,10 +14,18 @@ runner holds every decision; the host holds every byte.
 ## What is here, and what is still missing
 
 Present and internally consistent: the manifest, the Gradle files, the
-WorkManager schedule, the folder-grant and profile handling, the sweep loop, the
-notification, the share path, the ProGuard rules the JNI entry points need, and
-the JNI declarations on both sides. Every class the manifest names exists, and
-every symbol the Kotlin references is defined.
+WorkManager schedule, the folder-grant and profile handling, the sweep loop with
+the copy it writes aside before truncating a document, the notification, the
+share path, the ProGuard rules the JNI entry points need, and the JNI
+declarations on both sides. Every class the manifest names exists, and every
+symbol the Kotlin references is defined.
+
+Read "internally consistent" as "checked by eye", because that is all it is. It
+was not even true until recently: the call into `Native.due` passed a boolean
+where the boundary takes an integer, so the version published here for weeks
+could not have compiled, and nothing in this environment can notice such a
+thing. The Rust side is compiled and tested; everything in this directory is
+read and reasoned about.
 
 Still missing, and each is a real gap rather than a detail:
 

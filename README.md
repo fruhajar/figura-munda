@@ -219,6 +219,43 @@ decision about the document rather than about its metadata: **hidden worksheets*
 and **speaker notes**. Deleting a sheet is the user's call. The report says so in
 those words rather than quietly leaving them out.
 
+### What it refuses
+
+A refusal is a feature here, not a shortfall. Every one of these was a way to
+lose a file, break it, or be told something false about it, so each is a refusal
+naming the path and the reason rather than a warning to be clicked past.
+
+**Files it will not touch:**
+
+- A **signed** PDF, because any metadata edit invalidates the signature.
+- An **encrypted** PDF. Its text and metadata are ciphertext and the trailer
+  identifier is part of what the key is derived from, so a rewrite leaves a file
+  no reader will open.
+- An **OpenDocument** package, until the vocabulary is read. Reading one with
+  the OOXML part names finds no properties at all, which in a report is
+  indistinguishable from a document that has none.
+- An **incomplete copy**: an MP4 whose boxes do not account for every byte. The
+  fields are still in it and unreachable, so a field count would be a lie.
+- A PDF **nested deeper than the parser survives**, counted before it is
+  parsed, because the alternative is the process aborting and a folder run
+  stopping where it stood.
+
+**Writes it will not make:**
+
+- Over the original, which `--out` pointed at the originals' own folder used to
+  do silently. Say `--in-place` if that is what you mean.
+- Over a file at the destination that is not this file cleaned. A second run of
+  the same job writes again, because cleaning is idempotent and the result is
+  identical; anything else is somebody's file, and `--overwrite` is how you say
+  otherwise.
+- Two sources with one name into one folder, which would quietly keep whichever
+  finished last. The whole list is checked before anything is written.
+- Through a symlink, or over one name of a hardlinked file, in place. The first
+  would leave a cleaned file where the link was and the original untouched where
+  it pointed; the second would leave every other name on the original content.
+- Anything at all when the diff names a field the report did not, or when the
+  output fails its own verification.
+
 ## Coverage
 
 | Format | State |
@@ -249,11 +286,11 @@ tools/check-reproducible.sh   builds the same source in two paths and compares
 Both run on every push, in `.github/workflows/checks.yml`, alongside the suite,
 the fixture contract and the sign-off this project asks for. A check nobody is
 obliged to run is a check that stops being run, and the socket-symbol one was
-worse than that: it skipped with a notice when the release binaries were absent, so
-it would pass without having looked at anything. That is now a failure rather
-than a notice, along with the other ways it could pass without reading
-anything: `nm` missing, an artefact absent, or no imported symbols at all,
-which is what a static or stripped file looks like and says nothing either way.
+worse than that: it skipped with a notice when the release binaries were
+absent, so it passed without having looked at anything. That is a failure now,
+along with the other ways it could pass without reading anything: `nm` missing,
+an artefact absent, or no imported symbols at all, which is what a static or
+stripped file looks like and says nothing either way.
 `libfm_runner.so` is read as well, because a library has no symbols until
 something links it and that shared object is what the Android app loads.
 
@@ -376,24 +413,6 @@ tools/check-trust.sh            # the trust posture, checked rather than asserte
 tools/check-reproducible.sh     # two builds, two paths, one binary
 ```
 
-**What it will not do to your files.** Four of these were ways to lose one, so
-they are refusals rather than warnings, and each names the path it is about:
-
-- Writing the cleaned file over the original, which `--out` pointed at the
-  originals' own folder used to do silently. Say `--in-place` if that is what
-  you mean.
-- Writing over a file at the destination that is not this file cleaned. A
-  second run of the same job writes again, because cleaning is idempotent and
-  the result is identical; anything else is somebody's file, and `--overwrite`
-  is how you say otherwise.
-- Cleaning two sources with one name into one folder, which would quietly keep
-  whichever finished last. The whole list is checked before anything is
-  written.
-- Cleaning a symlink or one name of a hardlinked file in place. The first would
-  leave a cleaned file where the link was and the original untouched where it
-  pointed; the second would leave every other name on the original content. Both
-  read as a clean that happened when it did not.
-
 ### The window
 
 Two phases, in that order: **look at the files, then clean them.** The first
@@ -463,31 +482,50 @@ cleaning engine, the redaction checks and the runner never will be.
 
 ## Where it stands
 
-**Tested, and the tests say what they test.** 261 of them. The engine is checked
-against `fixtures/manifest.json`, which declares field by field what each
-generated fixture contains, so the manifest is the contract between the Python
-generator and the Rust engine and neither can quietly agree with itself. The
-cleaned MP4 is checked with `ffprobe`, and the cleaned PDFs with
-`fixtures/checkpdf.py`: a demuxer and a parser that know nothing about this
-engine, which is the only kind of check that means anything about output.
+**Tested, and the tests say what they test.** 261 of them, plus 103 checks in
+`fixtures/verify.py` that re-read the generated files without sharing any
+parsing code with the generator. The engine is checked against
+`fixtures/manifest.json`, which declares field by field what each fixture
+contains, so the manifest is the contract between the Python generator and the
+Rust engine and neither can quietly agree with itself. The cleaned MP4 is
+checked with `ffprobe` and the cleaned PDFs with `fixtures/checkpdf.py`: a
+demuxer and a parser that know nothing about this engine, which is the only
+kind of check that means anything about output.
+
+**A cold review, and what it found.** Three readers went through all of it with
+no stake in it being right, and the lesson was that a green suite was worth
+less than it looked. Files that reported clean with every field still in them.
+A PNG that lost the orientation that decides which way up it is shown, while
+the count called it preserved. A PDF that aborted the process and took the rest
+of a folder run with it. An encrypted document cleaned into one no reader would
+open. Four ways for a clean to overwrite something. A diff that could name a
+field the report never mentioned. And checkers that passed without reading
+anything.
+
+All of it is fixed. Each defect was reproduced with the command line before it
+was touched, and each one is now carried by a fixture or a test that fails if it
+comes back, which is why the fixture set looks the way it does: `nested.pdf`,
+`encrypted.pdf`, `clip-truncated.mp4`, `clip-ios.mov`, `report.odt` and
+`photo-oriented.png` are traps the engine walked into. `photo-codepage.jpg` is
+not from the review but from the first time the window was put on a screen,
+where every accented letter came out as a box.
 
 **Not verified, and it matters:**
 
-- **No PDF has been opened in a real reader.** `fixtures/checkpdf.py` closes most
-  of this: it parses the cross-reference table by hand, shares no code with the
-  engine, and asserts every offset lands on the object it claims to, which is
-  the failure a library reading its own output would hide. It reads the other
-  direction too, since an object in the file that the table does not mention is
-  exactly what unlinking an attachment without removing its bytes leaves
-  behind, and it says when a file is encrypted. `verify.py` hands it three
-  forgeries built from a sound file, because a checker that cannot fail is not a
-  check. It also confirms the incremental fixture comes out with one revision
-  instead of two. What it does
-  not do is render a page, so "opens in Acrobat and looks right" is still
-  unverified. Its first version skipped cross-reference streams quietly, which
-  meant the output whose structure was least verified was exactly the output
-  going unchecked; that is now a failure, and cleaning pins the output to a
-  classic table so there is nothing it cannot read.
+- **No PDF has been opened in a real reader.** What `fixtures/checkpdf.py` does
+  instead is parse the cross-reference table by hand, sharing no code with the
+  engine, and assert that every offset lands on the object it claims to, which
+  is the failure a library reading its own output would hide. It reads the
+  other direction as well, because an object in the file that the table does
+  not mention is what unlinking an attachment and leaving its bytes looks like.
+  It reports encryption, and it counts revisions, so a cleaned file that still
+  chains to an earlier one fails. `verify.py` hands it three forgeries built
+  from a sound file, since a checker that cannot fail is not a check. None of
+  that renders a page, so "opens in Acrobat and looks right" is still nobody's
+  evidence. Twice now this checker has been the thing at fault rather than the
+  engine: it skipped cross-reference streams in silence, which left the output
+  whose structure was least verified as the output going unchecked, and it
+  counted revisions by looking for a word rather than a line.
 - **The window has been on screen once**, on a tiling compositor, which found
   two defects at once: the columns did not give way when the window was narrow,
   and every accented letter was drawn as tofu. Both are fixed, the second in the
@@ -495,8 +533,11 @@ engine, which is the only kind of check that means anything about output.
   already ruined. What the layout does with the width it has is now a tested
   decision rather than two minimum widths and hope, but nothing beyond those two
   findings has been looked at by anyone, and no screenshot exists.
-- **Nothing in `mobile/android/` has been compiled.** No SDK, no NDK. It is the
-  interface worked out in full and labelled unverified in every file.
+- **Nothing in `mobile/android/` has been compiled.** No SDK, no NDK, no
+  device. It is the interface worked out in full and labelled unverified in
+  every file, and the review found a call in it that passed a boolean where the
+  boundary takes an integer, so the version published for weeks could not have
+  built. Read it as a design worked out in code, not as software.
 - **XLSX and PPTX** go through the OOXML handler but have had no fixture of their
   own, so only the parts they share with DOCX are exercised.
 
@@ -515,7 +556,15 @@ engine, which is the only kind of check that means anything about output.
 3. **Whether the mobile runner notifies on every sweep.** Silence is pleasant and
    also indistinguishable from the runner being dead, which is a bad property for
    a tool whose whole job is invisible.
-4. **What an audit trail is allowed to contain.** Decisions and counts can be
+4. **What a second clean to the same place should do.** Cleaning beside the
+   originals twice under one profile writes the identical file again, which is
+   fine. Under a different profile the destination holds something this run did
+   not produce, and that is refused rather than overwritten, because the same
+   check is what stops an unrelated file of the same name being destroyed. The
+   alternative is a new name, which trades a refusal the user has to act on for
+   clutter they may not notice. The refusal is the safe default and not
+   obviously the kind one.
+5. **What an audit trail is allowed to contain.** Decisions and counts can be
    recorded safely. Filenames and field values cannot, because the record then
    becomes a more sensitive document than the ones it audits. Settling this
    before the feature exists is cheaper than settling it afterwards.
