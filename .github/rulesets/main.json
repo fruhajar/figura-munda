@@ -1,0 +1,28 @@
+{
+  "name": "main is protected",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/main"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "required_status_checks": [
+          { "context": "tests, fixtures and clippy" },
+          { "context": "trust posture" },
+          { "context": "reproducible build" },
+          { "context": "developer certificate of origin" }
+        ]
+      }
+    }
+  ],
+  "bypass_actors": []
+}

@@ -292,6 +292,8 @@ mobile/android     the Android host
 fixtures/          generated test files and an independent verifier
 docs/              the reasoning: design notes and the compliance position
 tools/             the trust-posture and reproducible-build checks
+.github/           the four checks that run on every push, and the ruleset
+                   that keeps main from taking anything that failed them
 ```
 
 ```sh
@@ -311,6 +313,7 @@ tools/check-reproducible.sh     # two paths, one binary
 | [mobile/README.md](mobile/README.md) | The runner, the Android host, and why iOS cannot have the sweep |
 | [fixtures/README.md](fixtures/README.md) | The fixture set, the stubs that are stubs, and what the independent checks have caught |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | MPL-2.0, sign-off, and the two habits this codebase has |
+| [.github/rulesets/README.md](.github/rulesets/README.md) | What protects `main`, what was left out of it, and how to change it |
 
 ## Licence
 
