@@ -12,7 +12,7 @@ version = "0.10.1"
 edition = "2021"
 rust-version = "1.82"
 license = "MPL-2.0"
-repository = "https://github.com/figura/munda"
+repository = "https://github.com/fruhajar/figura-munda"
 
 [workspace.dependencies]
 anyhow = "1"
