@@ -127,7 +127,7 @@ effort.**
   original prompts the user for each one. A silent background sweep of the
   camera roll is not a thing the platform permits, by design.
 
-So iOS gets the **Share Extension** the root README already scoped: the file is
+So iOS gets the **Share Extension** [docs/design.md](../docs/design.md) scopes: the file is
 cleaned on its way out, at the moment it is being sent, which is the moment that
 matters anyway. An in-app folder for files the app itself owns can be swept on a
 `BGProcessingTask`, and that is worth having, but it must not be described to

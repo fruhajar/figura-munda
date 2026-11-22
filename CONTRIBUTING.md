@@ -69,7 +69,7 @@ new evidence:
 
 - **No browser extension.** Transparent upload interception is not buildable under
   MV3, and the content-script workaround breaks on every site redesign. The reasoning
-  is in the README.
+  is in [docs/design.md](docs/design.md).
 - **Never remove ICC profiles, tagged-PDF structure, EXIF orientation, SVG
   `<title>` and `<desc>`, or anything inside a signed PDF.** Stripping those is a
   regression, not a protection: the first three change how the file looks and the

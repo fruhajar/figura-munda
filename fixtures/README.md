@@ -44,7 +44,7 @@ rejects. The Rust test suite runs it over every cleaned fixture.
 | `clip-truncated.mp4` | an interrupted copy: every field still in the bytes, unreachable, and `ffprobe` still hands them out |
 | (all of them) | filesystem: pinned mtime, xattr, Zone.Identifier stand-in |
 
-That covers all ten classes in the root README.
+That covers all ten classes in [the root README](../README.md#what-it-finds).
 
 ## Cases worth knowing about
 

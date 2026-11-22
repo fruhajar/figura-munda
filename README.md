@@ -1,72 +1,91 @@
 # Figura Munda
 
-Shows you what a file reveals about you, then removes it.
+**Shows you what a file reveals about you, then removes it.**
 
 *Munda* as in clean. The adjective agrees with *figura*, following Figura Obscura.
 
-> **Status:** the engine, the command line, the desktop window and the mobile
-> runner exist and are tested. What is not built, and what has not been
-> verified, is listed under [Where it stands](#where-it-stands). Read that
-> before trusting anything here with a document that matters.
+> **Status.** The engine, the command line, the desktop window and the mobile
+> runner exist and are tested: 261 tests and 103 independent fixture checks.
+> What is not built, and what has not been verified, is in
+> [Where it stands](#where-it-stands). Read that before trusting this with a
+> document that matters.
+
+## Contents
+
+[Why](#why) · [Install](#install) · [Use](#use) ·
+[What it finds](#what-it-finds) · [Profiles](#profiles) ·
+[Never remove](#never-remove) · [What it refuses](#what-it-refuses) ·
+[Format coverage](#format-coverage) · [Trust posture](#trust-posture) ·
+[Where it stands](#where-it-stands) · [Layout](#layout) ·
+[Further reading](#further-reading) · [Licence](#licence)
 
 ## Why
 
-Every file you send carries more than you meant to send. Most of it is
-commercially useful to somebody: where you were, what you own, who you work for,
-and which of your files belong to the same person. The business model that reads
-it does not need your name, only a handle that is stable across your files, which
+Every file you send carries more than you meant to send: where you were, what
+you own, who you work for, and which of your files belong to the same person.
+Most of it is commercially useful to somebody. The business model that reads it
+does not need your name, only a handle that is stable across your files, which
 is why the correlation identifiers in this tool's list matter more than the
 obvious fields.
 
-So this is a tool, and it is also an argument: that the amount of information a
-person hands to advertisers and recommendation systems should be a setting they
-control, and that the default should not be "all of it". Every file cleaned is
-revenue that does not happen. That is the point, and the other Figura projects
-are the same argument applied elsewhere.
+So this is a tool, and it is also an argument: the amount a person hands to
+advertisers and recommendation systems should be a setting they control, and the
+default should not be all of it. Every file cleaned is revenue that does not
+happen.
 
 It only works at scale, and scale means the tool has to be pleasant enough to
-leave switched on. That is why the mobile runner exists, why the desktop window
-takes files and folders rather than one file at a time, and why nothing here
-needs an account.
+leave switched on. That is why the mobile runner exists, why the window takes
+folders rather than one file at a time, and why nothing here needs an account.
 
-## The problem this has to solve first
+**Inspection is the product; cleaning is the side effect.** A scrubbed file
+looks identical to the original, so a user has no reason to believe anything
+happened. Four visible artefacts answer that: the report, the diff, verify mode,
+and the recipient view. The reasoning is in
+[docs/design.md](docs/design.md).
 
-The cleaning is invisible. A scrubbed file looks identical to the original, so the
-tool does its real work as an unseen hand and a user has no reason to believe it
-worked, or that it was ever needed. That is the product risk, not the file formats.
+## Install
 
-The answer is that **inspection is the product and cleaning is the side effect.**
-Four visible artefacts carry it:
+Rust 1.82 or newer. No network at build time beyond crates.io, and none at all
+at run time.
 
-1. **The report.** Plain language, not a field dump. "This photo records where it was
-   taken, which phone took it, and still contains the uncropped original."
-2. **The diff.** Before and after, field by field, with what was kept and why.
-3. **Verify mode.** Re-inspect the output and assert it is clean. Also the regression
-   test suite, for free. It checks values rather than absence, because a coarsened
-   timestamp is supposed to still be there, and that is what catches a handler
-   which wrote the original value back out. It has a third answer besides pass
-   and fail: a PDF trailer identifier that was replaced and one that was never
-   touched are indistinguishable in the finished file, so checking a file on its
-   own reports that as unsettled rather than as a failure, and checking it against
-   the diff settles it.
-4. **Recipient view.** Render only what survives, so the user sees what the other
-   side sees.
+```sh
+cargo build --release     # target/release/fm-cli and target/release/fm-gui
+```
 
-A count helps too: "47 fields across 6 classes, 41 removed, 6 preserved."
+The window additionally needs `libwayland-dev`, `libxkbcommon-dev` and the X11
+headers on Linux. `ffmpeg` is needed only to generate the test fixtures.
 
-That promise is enforced rather than intended: a clean whose diff names a field
-the report did not is refused, and nothing is written. Consequences of cleaning
-are exempt and say so one by one in the code, because sample offsets corrected
-for removed bytes were never a field anyone could have been shown. The check
-earned its place immediately: a photograph was losing its EXIF version field
-with no mention of it in either the report or the diff, because the reader
-skipped tags it did not recognise while the writer dropped them anyway.
+## Use
 
-## The option model
+```sh
+fm-cli inspect photo.jpg                 # what is in it; writes nothing
+fm-cli inspect ~/Pictures -r --recipient # a folder, and what a recipient sees
+fm-cli clean photo.jpg --out ~/sent      # clean a copy, leaving the original
+fm-cli clean ~/Pictures -r -p strict     # a folder, under a stricter profile
+fm-cli clean report.pdf --dry-run        # the whole diff, writing nothing
+fm-cli verify ~/sent -r                  # assert the output really is clean
+fm-cli profile strict --save mine.toml   # a profile to edit and carry
+fm-gui                                   # the window
+```
 
-This is the core of the design. Two axes, rolled up into selectable profiles.
+Three things it does rather than surprise you:
 
-### What is in a file
+- **`inspect` never writes.** Neither does `clean --dry-run`.
+- **Removing something a reader can see waits for consent.** An uncropped
+  original, an off-canvas paragraph or a comment thread is listed in full, and
+  `clean` stops until you pass `--allow-content-loss`.
+- **A clean is refused rather than fudged.** See
+  [What it refuses](#what-it-refuses).
+
+The window runs the same engine in two phases, look then clean, and cannot reach
+the second without the first. The phone runs a background sweep over the folders
+you grant it, under a profile the desktop wrote. Both are described in
+[docs/design.md](docs/design.md), and the mobile side in detail in
+[mobile/README.md](mobile/README.md).
+
+## What it finds
+
+Ten classes. A profile decides what happens to each.
 
 | Class | Examples |
 |---|---|
@@ -81,60 +100,9 @@ This is the core of the design. Two axes, rolled up into selectable profiles.
 | **Structural fingerprint** | ZIP entry order and timestamps in OOXML, PDF object ordering and xref style, compression choices. Identifies the writing software and often its version, narrowing authorship even when all fields are gone. |
 | **Filesystem** | mtime, atime, birthtime, extended attributes, macOS `com.apple.metadata`, Windows `Zone.Identifier` (which records that the file was downloaded, and from where) |
 
-### What can be done to each
+## Profiles
 
-`keep` · `remove` · `replace` with a generic constant · `coarsen` (timestamps to the
-day or month) · `normalise` to a fixed constant across all files
-
-Three findings that shape the defaults:
-
-- **Normalising beats falsifying.** A plausible fake timestamp is worse than a removed
-  one. It can matter legally if the document is evidentiary or goes to an authority,
-  and it will contradict whichever fields survive, which is itself a signal. A fixed
-  constant, the way reproducible builds pin ZIP entries to 1980-01-01, is uniform and
-  makes no false claim.
-- **Coarsening GPS is usually worse than removing it.** One decimal place still puts
-  you in a named neighbourhood while implying precision was handled.
-- **Stripping is itself a fingerprint.** A file cleaned in exactly `mat2`'s pattern
-  identifies you as a `mat2` user. Where there is a choice, match what a common tool
-  or platform already emits, so the output joins a large anonymity set rather than a
-  small one.
-
-### Blending in
-
-The last of those three is a behaviour, not only a principle, and it is the second
-switch a profile carries: **match common tools** or **strip to the minimum**.
-
-Matching usually wins. A JPEG with no JFIF header at all leaks fewer bytes and
-marks you as someone who runs a metadata stripper, which is a smaller crowd to
-hide in than "every image a server ever resized". So the default keeps the inert
-headers that ordinary software leaves, and the engine names the crowd the output
-joined: *"looks like a plain baseline JPEG with no application segments (very
-common)"*.
-
-Two consequences worth stating, because both surprised us while building it:
-
-- **A field can be removed that the profile said to keep.** A date in a PNG or a
-  `udta` date in an MP4 is written by almost nothing except the device that made
-  the file, so keeping one is the fingerprint. Those are dropped under `match
-  common tools` even when `Time` is set to keep, and the diff says exactly that
-  and why. A date in a JPEG's EXIF or a PDF's Info dictionary is ordinary, so
-  those are left to the profile. The question is never "does this format have
-  dates" but "is a date normal *here*".
-- **Keeping any date costs you the largest crowd.** It is a real trade and the
-  tool reports it rather than hiding it: `standard` on a photograph lands in "a
-  JPEG keeping only its capture date", which is common but not the most common.
-  Removing the date reaches "an EXIF block holding orientation and nothing else",
-  which is what every resize pipeline leaves.
-
-Every entry in the anonymity-set table carries its **provenance**: whether it
-follows from the format specification, was measured on a real file, or is simply
-assumed. Most are still assumed, and reports say so in those words. The leakage
-survey below is what turns assumptions into measurements, and that table is the
-slot its results land in. Nothing in the engine depends on an entry being right:
-a wrong one produces a wrong sentence in a report, never a leak.
-
-### Profiles
+Profile choice is the single decision a user makes.
 
 | Class | `standard` | `strict` | `uniform` |
 |---|---|---|---|
@@ -150,76 +118,37 @@ a wrong one produces a wrong sentence in a report, never a leak.
 | Filesystem | keep | reset | normalise to constant |
 
 There is a fourth, `inspect`, which keeps everything and is how the tool reports
-without touching anything.
-
-`uniform` is the one that makes two files from different people indistinguishable,
-and it is also the one most likely to look odd to a recipient. `custom` overrides any
-cell. Profile choice is the single decision a user makes.
-
-Profiles are TOML, they round-trip, and the file the desktop writes is the file
-the phone reads:
-
-```toml
-name = "strict"
-description = "Everything in standard, plus dates coarsened to the day, ..."
-blending = "match-common"
-
-[actions]
-identity = "remove"
-device = "remove"
-location = "remove"
-time = "coarsen-day"
-correlation = "remove"
-history = "remove"
-hidden-payload = "remove"
-redaction-integrity = "enforce"
-structural-fingerprint = "keep"
-filesystem = "reset"
-
-[constants]
-generic-text = ""
-
-[constants.timestamp]
-year = 1980
-month = 1
-day = 1
-hour = 0
-minute = 0
-second = 0
-
-[runner]
-enabled = true
-interval-hours = 6
-roots = ["DCIM/Camera"]
-new-files-only = true
-keep-original = false
-```
-
-(`fm profile strict --save mine.toml` writes exactly that, and `fm clean
---profile mine.toml` reads it back.)
-
-Cells are validated rather than trusted: `identity = "coarsen-day"` is rejected
-at load, because coarsening a name means nothing and a profile that silently did
+without touching anything. `custom` overrides any cell. Profiles are TOML, they
+round-trip, and the file the desktop writes is the file the phone reads. Cells
+are validated rather than trusted: `identity = "coarsen-day"` is rejected at
+load, because coarsening a name means nothing and a profile that silently did
 nothing would be worse than one that refused.
 
-### Never remove
+The full file, and why `uniform` exists at all, are in
+[docs/design.md](docs/design.md).
 
-Stripping these is a regression, not a protection: ICC colour profiles (the image
-changes appearance), tagged-PDF accessibility structure, and anything inside a
-**signed** PDF. Detect signatures and refuse rather than silently invalidating them.
+## Never remove
 
-Building it added two more. **EXIF orientation** decides which way up a photograph
-is shown, so removing it turns pictures on their side; it is reported as kept on
-purpose, like the colour profile. **SVG `<title>` and `<desc>`** are what a screen
-reader reads out, so they stay even though they can name an author, and the report
-says they were kept and why.
+Stripping any of these is a regression rather than a protection, so no profile
+can:
 
-And two things are reported but never acted on, because acting on them is a
-decision about the document rather than about its metadata: **hidden worksheets**
-and **speaker notes**. Deleting a sheet is the user's call. The report says so in
-those words rather than quietly leaving them out.
+- **ICC colour profiles.** The image changes appearance without them.
+- **Tagged-PDF structure.** It is what a screen reader follows through a
+  document.
+- **EXIF orientation.** Removing it turns photographs on their side. This one
+  was found by building the thing, not by planning it.
+- **SVG `<title>` and `<desc>`.** What a screen reader reads out, kept even
+  though they can name an author.
+- **Anything inside a signed PDF**, which is detected and refused rather than
+  silently invalidated.
 
-### What it refuses
+Each is reported as kept on purpose, with the reason, rather than quietly left
+in. Two more things are reported and never acted on, because acting on them is a
+decision about the document rather than about its metadata: **hidden
+worksheets** and **speaker notes**. Deleting a sheet is the user's call, and the
+report says so in those words.
+
+## What it refuses
 
 A refusal is a feature here, not a shortfall. Every one of these was a way to
 lose a file, break it, or be told something false about it, so each is a refusal
@@ -227,36 +156,33 @@ naming the path and the reason rather than a warning to be clicked past.
 
 **Files it will not touch:**
 
-- A **signed** PDF, because any metadata edit invalidates the signature.
-- An **encrypted** PDF. Its text and metadata are ciphertext and the trailer
-  identifier is part of what the key is derived from, so a rewrite leaves a file
-  no reader will open.
-- An **OpenDocument** package, until the vocabulary is read. Reading one with
-  the OOXML part names finds no properties at all, which in a report is
-  indistinguishable from a document that has none.
+- A **signed** PDF: any metadata edit invalidates the signature.
+- An **encrypted** PDF: the text and metadata are ciphertext and the trailer
+  identifier is part of the key, so a rewrite leaves a file nothing opens.
+- An **OpenDocument** package, until the vocabulary is read. Read with the OOXML
+  part names it has no properties at all, which in a report is indistinguishable
+  from a document that has none.
 - An **incomplete copy**: an MP4 whose boxes do not account for every byte. The
-  fields are still in it and unreachable, so a field count would be a lie.
-- A PDF **nested deeper than the parser survives**, counted before it is
-  parsed, because the alternative is the process aborting and a folder run
-  stopping where it stood.
+  fields are still in it, unreachable, so a field count would be a lie.
+- A PDF **nested deeper than the parser survives**, counted before parsing,
+  because the alternative is the process aborting mid-folder.
 
 **Writes it will not make:**
 
-- Over the original, which `--out` pointed at the originals' own folder used to
-  do silently. Say `--in-place` if that is what you mean.
-- Over a file at the destination that is not this file cleaned. A second run of
-  the same job writes again, because cleaning is idempotent and the result is
-  identical; anything else is somebody's file, and `--overwrite` is how you say
-  otherwise.
-- Two sources with one name into one folder, which would quietly keep whichever
+- **Over the original**, which `--out` pointed at the originals' own folder used
+  to do silently. `--in-place` is how you say you mean it.
+- **Over a file that is not this file cleaned.** Running the same job twice
+  writes again, because cleaning is idempotent; anything else is somebody's
+  file, and `--overwrite` is how you say otherwise.
+- **Two sources with one name into one folder**, which would keep whichever
   finished last. The whole list is checked before anything is written.
-- Through a symlink, or over one name of a hardlinked file, in place. The first
-  would leave a cleaned file where the link was and the original untouched where
-  it pointed; the second would leave every other name on the original content.
-- Anything at all when the diff names a field the report did not, or when the
-  output fails its own verification.
+- **Through a symlink, or over one name of a hardlinked file, in place.** The
+  first leaves the original dirty where the link pointed; the second leaves it
+  dirty under every other name.
+- **Anything at all** when the diff names a field the report did not, or when
+  the output fails its own verification.
 
-## Coverage
+## Format coverage
 
 | Format | State |
 |---|---|
@@ -268,303 +194,131 @@ naming the path and the reason rather than a warning to be clicked past.
 | **MP4 / MOV** | Done. `udta` and `ilst`, including the `keys`-indexed `ilst` a recent iPhone writes, the 3GPP `loci` box, the `©xyz` position a handset writes, and the header timestamps, with the sample tables corrected for what was removed. A copy whose boxes do not account for every byte is refused rather than part-read. |
 | **ODF** | Not yet, and refused by name rather than part-read. The ZIP and XML layers are in place and shared; the part names and the metadata vocabulary are not, and reading an ODF package with the OOXML part names finds no properties at all, which in a report is indistinguishable from a document that has none. `report.odt` is a fixture of exactly that, declaring the fields the engine does not read. |
 | **HEIC, TIFF** | Not yet. The EXIF reader and writer are shared, so TIFF is mostly container work; HEIC needs the ISOBMFF item structure, which the MP4 box walker is a start on. |
-
 ## Trust posture
 
-No network, ever. No accounts, no telemetry, no model downloads. Input and output
-both sit on disk and can be diffed by anyone who doubts the claim. Reproducible
-builds so a published binary can be checked against this source.
+No network, ever. No accounts, no telemetry, no model downloads. Input and
+output both sit on disk and can be diffed by anyone who doubts the claim.
+Reproducible builds, so a published binary can be checked against this source.
 
 Three of those are mechanically checkable, so they are checked rather than
 asserted:
 
 ```
 tools/check-trust.sh          networking crates, socket symbols, licences
-tools/check-reproducible.sh   builds the same source in two paths and compares
+tools/check-reproducible.sh   the same source in two paths, byte for byte
 ```
 
-Both run on every push, in `.github/workflows/checks.yml`, alongside the suite,
-the fixture contract and the sign-off this project asks for. A check nobody is
-obliged to run is a check that stops being run, and the socket-symbol one was
-worse than that: it skipped with a notice when the release binaries were
-absent, so it passed without having looked at anything. That is a failure now,
-along with the other ways it could pass without reading anything: `nm` missing,
-an artefact absent, or no imported symbols at all, which is what a static or
-stripped file looks like and says nothing either way.
-`libfm_runner.so` is read as well, because a library has no symbols until
-something links it and that shared object is what the Android app loads.
-
-The crate audit is a denylist, so it only knows the names it was given, and a
-crate can reach the network through `std` with no dependency at all. The symbol
-check is what covers that gap, which is why it has to be the one that cannot
-pass for free.
-
-What they found, and the nuance each one exposed:
+Both run on every push, in
+[`.github/workflows/checks.yml`](.github/workflows/checks.yml), alongside the
+suite, the fixture contract and the sign-off this project asks for. What they
+find:
 
 - **No dependency in any of the four closures can do networking.** 426 crates,
   nothing that speaks a network protocol or resolves a name.
-- **`fm-cli` imports no socket symbols at all**, so that binary cannot open one;
-  the claim is a property of the file rather than a promise about the source.
-  **`fm-gui` imports four**, and the honest reason is that a display server is
-  reached over a Unix socket and the X11 client in the clipboard stack can be
-  pointed at a remote display. Nothing of ours does networking; the window links
-  a stack that could. Anyone who wants the version that is provable from the
-  binary alone should use the command line.
+- **`fm-cli` and `libfm_runner.so` import no socket symbols at all**, so those
+  artefacts cannot open one: a property of the file rather than a promise about
+  the source. **`fm-gui` imports four**, and the honest reason is that a display
+  server is reached over a Unix socket and the X11 client in the clipboard stack
+  can be pointed at a remote display. Anyone who wants the version that is
+  provable from the binary alone should use the command line.
 - **No dependency is under a licence with no permissive alternative**, which is
-  what a separately-licensed layer linking this engine requires. Nothing is
-  unstated either, which is the worse case because it cannot be reasoned about.
-- **The build was not reproducible and now is.** It was always deterministic:
-  two builds in the same directory give byte-identical output. But the build
-  path leaked in through build scripts that embed their `OUT_DIR`, so the same
-  source in two directories gave two different binaries. The `--remap-path-prefix`
-  flags in `tools/check-reproducible.sh` are therefore part of the release
-  recipe, not an optimisation, and the script fails if that stops being true.
+  what a separately-licensed layer linking this engine requires.
+- **The build is reproducible**, and was not until the build path was remapped:
+  the same source in two directories gave two different binaries, because build
+  scripts embed their `OUT_DIR`. The remapping is part of the release recipe,
+  not an optimisation.
 
-## Compliance, and the policy layer
+A check that can pass without reading anything is not a check, which these
+could: the symbol check skipped quietly when the binaries were absent, and the
+reproducible one varied only the output directory. Both now fail instead.
 
-### What this tool is, legally
+## Where it stands
 
-It is a data-minimisation tool that runs entirely on the user's machine. It is
-not a processor of anyone's data: nothing leaves the device, there is no
-operator, and there is nothing to make a data-processing agreement about. For a
-business buyer the relevant framing is GDPR Article 5(1)(c) and Article 25, where
-removing what you do not need before a file leaves the building is exactly the
-measure those articles ask for. That is the commercial hook, and it is a true
-one.
+**Tested, and the tests say what they test.** 261 tests, plus 103 checks in
+`fixtures/verify.py` that re-read the generated files sharing no parsing code
+with the generator. `fixtures/manifest.json` declares field by field what each
+fixture holds, so the manifest is the contract between the Python side and the
+Rust side and neither can quietly agree with itself. Cleaned MP4s are checked
+with `ffprobe` and cleaned PDFs with `fixtures/checkpdf.py`, a demuxer and a
+parser that know nothing about this engine, which is the only kind of check
+that says anything about output.
 
-### What the operator is responsible for
+**A cold review found that a green suite was worth less than it looked.** Three
+readers with no stake in it being right turned up files that reported clean with
+every field still in them, a PNG that lost the orientation deciding which way up
+it is shown while the count called it preserved, a PDF that aborted the process
+and took a folder run with it, an encrypted document cleaned into one no reader
+would open, four ways for a clean to overwrite something, a diff that could name
+a field the report never mentioned, and checkers that passed without reading
+anything.
 
-**Metadata is part of a document for evidentiary purposes in most
-jurisdictions.** A file under a litigation hold or a disclosure obligation should
-not be cleaned, and removing its metadata can be spoliation whatever the intent
-was. This is also why `normalise` exists and `falsify` does not: a fixed constant
-makes no false claim, while a plausible fake timestamp is a statement that is not
-true.
+All of it is fixed. Each defect was reproduced with the command line before it
+was touched, and each is now carried by a fixture or a test that fails if it
+returns, which is why the fixture set looks the way it does: `nested.pdf`,
+`encrypted.pdf`, `clip-truncated.mp4`, `clip-ios.mov`, `report.odt` and
+`photo-oriented.png` are traps the engine walked into. `photo-codepage.jpg`
+came from the first time the window was put on a screen, where every accented
+letter arrived as a box.
 
-Knowing that is the point of writing it down here. Acting on it is the operator's
-job, not the tool's, and the control is the obvious one: do not put such a file
-in a folder that is being cleaned, and do not point the tool at it. A document
-under hold belongs in a document management system that knows it is under hold.
-This tool cannot know, because there is nothing in a file that says so, and a
-guard that depended on the user marking the file would be the same act as the
-user not putting it there.
+**Not verified, and it matters:**
 
-So there is no legal-hold feature and there is not going to be one. What the tool
-does instead is refuse to be surprising: `inspect` examines without touching
-anything, the report names every field before a byte is written, the desktop
-window will not clean until the first phase has run, and anything that removes
-content a reader can see is listed in full and waits for a tick.
+- **No PDF has been opened in a real reader.** `fixtures/checkpdf.py` parses the
+  cross-reference table by hand, shares no code with the engine, checks both
+  directions between the table and the objects, reports encryption and counts
+  revisions. It does not render a page, so "opens in Acrobat and looks right" is
+  nobody's evidence yet. Twice the checker has been the thing at fault rather
+  than the engine, which is why `verify.py` now hands it three forgeries: a
+  checker that cannot fail is not a check.
+- **The window has been on screen once**, on a tiling compositor, which found
+  two defects at once: columns that did not give way at narrow widths, and every
+  accented letter drawn as tofu. Both are fixed, the second in the engine rather
+  than the window. Nothing beyond those two findings has been looked at by
+  anyone, and no screenshot exists.
+- **Nothing in `mobile/android/` has been compiled.** No SDK, no NDK, no device.
+  The review found a call in it passing a boolean where the boundary takes an
+  integer, so the version published for weeks could not have built. Read it as a
+  design worked out in code, not as software.
+- **XLSX and PPTX** go through the OOXML handler with no fixture of their own, so
+  only the parts they share with DOCX are exercised.
 
-The one place to be deliberate is the mobile runner, because it is the only part
-that cleans without anyone present: it sweeps the folders it was given, in place,
-on a schedule, including files that arrived long after those folders were chosen.
-That is what it is for, and it is why `DCIM/Camera` is the example and
-`Documents` is not.
-
-**Cleaning is not redaction.** `enforce` removes text that a filled rectangle
-only appeared to hide, which is a genuine fix for a genuine failure, but a tool
-that reflows or re-encodes is not a substitute for a redaction workflow with
-review and sign-off. Nothing here should be described as one.
-
-### The policy layer, and the problem in it
-
-Profiles are already a policy format in everything but name: a file, validated
-on load, carried between a desktop and a phone. What would make them an
-organisational policy is three things, none of which exist:
-
-1. **Locked cells.** A profile cannot currently say "Location is removed and the
-   user may not change that". Every cell is advisory, so a distributed profile is
-   a suggestion.
-2. **Provenance.** Nothing signs a profile, so nothing can tell an
-   administrator's profile from a file the user edited. Locked cells without
-   signing would be security theatre.
-3. **Precedence.** With more than one profile in play there is no rule for which
-   wins, and the safe answer (the strictest cell from any applicable profile)
-   is not obviously the one an administrator expects.
-
-**And the audit trail has a problem worth stating before anyone builds it.** An
-audit trail for this tool is a list of which files a person had, when, and what
-was in them. That is a more sensitive artefact than most of what it would be
-auditing. The mobile journal already runs into this: it is excluded from cloud
-backup and device transfer for exactly that reason. A compliance feature that
-produces a durable, centralised, exportable record of everyone's documents would
-undo the thing the product is for, so if it is built it should record **decisions
-and counts, not filenames and field values**, and that constraint should be in
-the design from the start rather than retrofitted after a customer asks for
-names.
-
-## Deliverables
+## Layout
 
 ```
 desktop/fm-core    the engine: classes, profiles, format handlers, reports
-desktop/fm-cli     fm inspect | clean | verify | profile
+desktop/fm-cli     the command line: inspect, clean, verify, profile
 desktop/fm-gui     the window
 mobile/runner      the periodic sweep, and the Android bridge
 mobile/android     the Android host
 fixtures/          generated test files and an independent verifier
+docs/              the reasoning: design notes and the compliance position
+tools/             the trust-posture and reproducible-build checks
 ```
 
-```
+```sh
 cargo test                      # everything
-cargo run -p fm-cli -- inspect ~/Pictures
-cargo run -p fm-gui
-python3 fixtures/generate.py    # the test files the engine is checked against
+python3 fixtures/generate.py    # the files the engine is checked against
+python3 fixtures/verify.py      # re-read them, sharing no code with the generator
 tools/check-trust.sh            # the trust posture, checked rather than asserted
-tools/check-reproducible.sh     # two builds, two paths, one binary
+tools/check-reproducible.sh     # two paths, one binary
 ```
 
-### The window
+## Further reading
 
-Two phases, in that order: **look at the files, then clean them.** The first
-phase writes nothing. The second cannot be reached without passing through the
-first, and changing the profile or adding a file sends the session back, because
-a review of a different profile is not a review of this one.
-
-- Files or whole folders, by button or by dropping them on the window.
-- The four artefacts as tabs on whichever file is selected: what is in it, what
-  would change, what the recipient would see, and the profile table that produced
-  all three.
-- The file list opens on the file with the worst thing in it, and colours each
-  entry by what that thing is.
-- Any change that would remove something a reader can see is listed in full and
-  waits for a tick. Removing a comment thread, an off-canvas paragraph or an
-  uncropped original should be a decision, not a surprise.
-- Where the cleaned files go is a choice: beside the originals, into a folder, or
-  replacing them. Replacing is possible and says plainly that there will be
-  nothing left to compare against.
-
-All of that logic lives in a `Session` with no GUI code in it, so the flow is
-tested without a display: 22 tests covering the state machine, the gate and the
-three destinations.
-
-### The phone
-
-A photograph is geotagged the moment it is taken, and a user who has to remember
-to clean it before sending it will forget. So the phone's product is a
-**background runner**: it sweeps the folders it was pointed at, on a schedule,
-under one profile, and says what it did. The profile file is the one the desktop
-writes, unchanged, so one profile can be carried between them.
-
-The runner has no file paths in it, which is the decision the mobile design turns
-on: since scoped storage an Android app reaches the camera roll through document
-URIs, not paths. The reasoning, the JNI surface, and why **iOS cannot have the
-runner at all**, are in [`mobile/README.md`](mobile/README.md).
-
-### Shell integration
-
-Not built. Explorer, Nautilus and Dolphin entries and macOS Quick Actions all
-shell out to `fm clean`, so they are packaging rather than engineering, and they
-follow the path already proven by Figura Obscura.
-
-**No browser extension.** Transparent upload interception is not buildable: MV3's
-`declarativeNetRequest` cannot touch request bodies, blocking `webRequest` is gone,
-and `requestBody` is read-only even in Firefox. The MAIN-world JS-patching workaround
-breaks on every site redesign, which is a maintenance tax this project exists to
-avoid.
+| Document | What is in it |
+|---|---|
+| [docs/design.md](docs/design.md) | Why the options are shaped this way: the four artefacts, blending and anonymity sets, the profile file, the window, and the open decisions |
+| [docs/compliance.md](docs/compliance.md) | What this is legally, what the operator is responsible for, and the policy layer that does not exist yet |
+| [mobile/README.md](mobile/README.md) | The runner, the Android host, and why iOS cannot have the sweep |
+| [fixtures/README.md](fixtures/README.md) | The fixture set, the stubs that are stubs, and what the independent checks have caught |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | MPL-2.0, sign-off, and the two habits this codebase has |
 
 ## Licence
 
-**MPL-2.0**, with the commercial layer kept in a separate private repository that
-links this engine rather than absorbing it. File-level copyleft means nobody can
-close a fork of the cleaning engine, and contributions need no CLA. See
+**MPL-2.0.** File-level copyleft means nobody can close a fork of the cleaning
+engine, and contributions need no CLA. The commercial layer lives in a separate
+private repository that links this engine rather than absorbing it, and what it
+may contain is organisation-shaped and never security-relevant: fleet policy,
+dashboards, audit trails, multi-user management. Inspection, the cleaning
+engine, the redaction checks and the runner never will be. The reasoning, and
+how the boundary moved outward while this was built, are in
 [CONTRIBUTING.md](CONTRIBUTING.md).
-
-**The boundary moved while this was built, and it moved outward.** The original
-note put batch processing and watched folders on the closed side. They are now
-open: a tool that cleans one file at a time is a tool nobody leaves switched on,
-and a mobile runner that is not free is a movement that does not spread. Folder
-runs, profiles, the window and the periodic sweep are all MPL.
-
-What remains available to close is organisation-shaped and never
-security-relevant: distributing a policy to a fleet, dashboards over many
-machines, compliance audit trails, and multi-user management. Inspection, the
-cleaning engine, the redaction checks and the runner never will be.
-
-## Where it stands
-
-**Tested, and the tests say what they test.** 261 of them, plus 103 checks in
-`fixtures/verify.py` that re-read the generated files without sharing any
-parsing code with the generator. The engine is checked against
-`fixtures/manifest.json`, which declares field by field what each fixture
-contains, so the manifest is the contract between the Python generator and the
-Rust engine and neither can quietly agree with itself. The cleaned MP4 is
-checked with `ffprobe` and the cleaned PDFs with `fixtures/checkpdf.py`: a
-demuxer and a parser that know nothing about this engine, which is the only
-kind of check that means anything about output.
-
-**A cold review, and what it found.** Three readers went through all of it with
-no stake in it being right, and the lesson was that a green suite was worth
-less than it looked. Files that reported clean with every field still in them.
-A PNG that lost the orientation that decides which way up it is shown, while
-the count called it preserved. A PDF that aborted the process and took the rest
-of a folder run with it. An encrypted document cleaned into one no reader would
-open. Four ways for a clean to overwrite something. A diff that could name a
-field the report never mentioned. And checkers that passed without reading
-anything.
-
-All of it is fixed. Each defect was reproduced with the command line before it
-was touched, and each one is now carried by a fixture or a test that fails if it
-comes back, which is why the fixture set looks the way it does: `nested.pdf`,
-`encrypted.pdf`, `clip-truncated.mp4`, `clip-ios.mov`, `report.odt` and
-`photo-oriented.png` are traps the engine walked into. `photo-codepage.jpg` is
-not from the review but from the first time the window was put on a screen,
-where every accented letter came out as a box.
-
-**Not verified, and it matters:**
-
-- **No PDF has been opened in a real reader.** What `fixtures/checkpdf.py` does
-  instead is parse the cross-reference table by hand, sharing no code with the
-  engine, and assert that every offset lands on the object it claims to, which
-  is the failure a library reading its own output would hide. It reads the
-  other direction as well, because an object in the file that the table does
-  not mention is what unlinking an attachment and leaving its bytes looks like.
-  It reports encryption, and it counts revisions, so a cleaned file that still
-  chains to an earlier one fails. `verify.py` hands it three forgeries built
-  from a sound file, since a checker that cannot fail is not a check. None of
-  that renders a page, so "opens in Acrobat and looks right" is still nobody's
-  evidence. Twice now this checker has been the thing at fault rather than the
-  engine: it skipped cross-reference streams in silence, which left the output
-  whose structure was least verified as the output going unchecked, and it
-  counted revisions by looking for a word rather than a line.
-- **The window has been on screen once**, on a tiling compositor, which found
-  two defects at once: the columns did not give way when the window was narrow,
-  and every accented letter was drawn as tofu. Both are fixed, the second in the
-  engine rather than the window, since the string reaching the renderer was
-  already ruined. What the layout does with the width it has is now a tested
-  decision rather than two minimum widths and hope, but nothing beyond those two
-  findings has been looked at by anyone, and no screenshot exists.
-- **Nothing in `mobile/android/` has been compiled.** No SDK, no NDK, no
-  device. It is the interface worked out in full and labelled unverified in
-  every file, and the review found a call in it that passed a boolean where the
-  boundary takes an integer, so the version published for weeks could not have
-  built. Read it as a design worked out in code, not as software.
-- **XLSX and PPTX** go through the OOXML handler but have had no fixture of their
-  own, so only the parts they share with DOCX are exercised.
-
-## Open decisions
-
-1. **Leakage survey.** Which destinations actually leak? Major social platforms
-   re-encode and strip EXIF anyway, so the real exposure is webmail attachments,
-   forums, file hosts and application portals. This also decides most of the
-   anonymity-set table, which is currently honest about being mostly assumption.
-2. **Whether to write a generic `/Producer` into cleaned PDFs.** Almost every PDF
-   in circulation names a producer, so removing it is conspicuous, and the tool
-   currently removes it and says the result is distinctive. Writing "Figura
-   Munda" is true and identifies the tool. Writing a common vendor string is
-   neither. A profile can already do it via `replace`; what is undecided is the
-   default, and the survey should settle it rather than taste.
-3. **Whether the mobile runner notifies on every sweep.** Silence is pleasant and
-   also indistinguishable from the runner being dead, which is a bad property for
-   a tool whose whole job is invisible.
-4. **What a second clean to the same place should do.** Cleaning beside the
-   originals twice under one profile writes the identical file again, which is
-   fine. Under a different profile the destination holds something this run did
-   not produce, and that is refused rather than overwritten, because the same
-   check is what stops an unrelated file of the same name being destroyed. The
-   alternative is a new name, which trades a refusal the user has to act on for
-   clutter they may not notice. The refusal is the safe default and not
-   obviously the kind one.
-5. **What an audit trail is allowed to contain.** Decisions and counts can be
-   recorded safely. Filenames and field values cannot, because the record then
-   becomes a more sensitive document than the ones it audits. Settling this
-   before the feature exists is cheaper than settling it afterwards.
